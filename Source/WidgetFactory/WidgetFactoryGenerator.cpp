@@ -45,6 +45,7 @@
 #include "K2Node_FunctionResult.h"
 #include "HAL/PlatformFileManager.h"
 #include "Interfaces/IPluginManager.h"
+#include "Internationalization/Regex.h"
 
 #if WITH_UNLUA
 #include "UnLuaInterface.h"
@@ -467,7 +468,20 @@ void UWidgetFactoryGenerator::SetWidgetAsVariable(UWidget* Widget, const FString
 {
 	if (!Widget || Name.IsEmpty()) return;
 	Widget->bIsVariable = true;
-	Widget->Rename(*Name);
+
+	// Check if an object with this name already exists in the same outer
+	UObject* Existing = StaticFindObjectFast(nullptr, Widget->GetOuter(), FName(*Name));
+	if (Existing && Existing != Widget)
+	{
+		// Append a unique suffix to avoid fatal rename collision
+		FString UniqueName = FString::Printf(TEXT("%s_%d"), *Name, FMath::Rand());
+		UE_LOG(LogWidgetFactory, Warning, TEXT("命名冲突: %s 已存在，改用 %s"), *Name, *UniqueName);
+		Widget->Rename(*UniqueName);
+	}
+	else
+	{
+		Widget->Rename(*Name);
+	}
 }
 
 UWidget* UWidgetFactoryGenerator::CreateWidgetFromJson(
@@ -927,7 +941,17 @@ TSharedPtr<FJsonObject> UWidgetFactoryGenerator::ExportWidgetToJson(UWidget* Wid
 	Json->SetStringField(TEXT("Name"), Widget->GetName());
 
 	if (Widget->bIsVariable)
-		Json->SetBoolField(TEXT("IsVariable"), true);
+	{
+		// Only export IsVariable for meaningfully named widgets
+		// Skip auto-generated names like Image_0, TextBlock_5, CanvasPanel_1 etc.
+		FString WidgetName = Widget->GetName();
+		static const FRegexPattern AutoNamePattern(TEXT("^[A-Za-z]+_\\d+$"));
+		FRegexMatcher Matcher(AutoNamePattern, WidgetName);
+		if (!Matcher.FindNext())
+		{
+			Json->SetBoolField(TEXT("IsVariable"), true);
+		}
+	}
 
 	// Slot
 	auto SlotJson = ExportSlotToJson(Widget);

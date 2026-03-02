@@ -16,15 +16,20 @@
 #include "HAL/PlatformProcess.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "ContentBrowserModule.h"
+#include "IContentBrowserSingleton.h"
+#include "WidgetBlueprint.h"
 
 const FName FWidgetFactoryTabManager::TabId = FName("WidgetFactoryTab");
 
 // Chinese text constants (UTF-8)
 #define WF_TEXT_GENERATE_SELECTED  TEXT("生成选中")
 #define WF_TEXT_GENERATE_ALL       TEXT("全部生成")
+#define WF_TEXT_EXPORT_SELECTED    TEXT("导出蓝图→JSON")
 #define WF_TEXT_REFRESH            TEXT("刷新列表")
 #define WF_TEXT_OPEN_FOLDER        TEXT("打开模板目录")
 #define WF_TEXT_OUTPUT_PATH        TEXT("输出路径:")
+#define WF_TEXT_EXPORT_SOURCE      TEXT("导出来源:")
 #define WF_TEXT_TEMPLATE_DIR       TEXT("模板目录:")
 #define WF_TEXT_UNLUA_TAG          TEXT("[UnLua]")
 #define WF_TEXT_STATUS_READY       TEXT("就绪")
@@ -72,6 +77,13 @@ void SWidgetFactoryWindow::Construct(const FArguments& InArgs)
 				SNew(SButton)
 				.Text(FText::FromString(WF_TEXT_OPEN_FOLDER))
 				.OnClicked(this, &SWidgetFactoryWindow::OnOpenTemplateFolder)
+			]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 4, 0)
+			[
+				SNew(SButton)
+				.Text(FText::FromString(WF_TEXT_EXPORT_SELECTED))
+				.OnClicked(this, &SWidgetFactoryWindow::OnExportSelected)
+				.ToolTipText(FText::FromString(TEXT("从已有 Widget Blueprint 反向导出 JSON 模板")))
 			]
 			+ SHorizontalBox::Slot().FillWidth(1.0f)
 			[
@@ -124,6 +136,22 @@ void SWidgetFactoryWindow::Construct(const FArguments& InArgs)
 				{
 					OutputPath = Text.ToString();
 				})
+			]
+		]
+
+		// 导出来源（显示当前 Content Browser 选中的资源）
+		+ SVerticalBox::Slot().AutoHeight().Padding(8, 2, 8, 4)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 8, 0)
+			[
+				SNew(STextBlock).Text(FText::FromString(WF_TEXT_EXPORT_SOURCE))
+			]
+			+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)
+			[
+				SAssignNew(ExportSourceText, STextBlock)
+				.Text(FText::FromString(TEXT("（在 Content Browser 中选中 Widget Blueprint）")))
+				.ColorAndOpacity(FSlateColor(FLinearColor(0.5f, 0.5f, 0.5f)))
 			]
 		]
 
@@ -304,6 +332,78 @@ FReply SWidgetFactoryWindow::OnOpenTemplateFolder()
 		IFileManager::Get().MakeDirectory(*Dir, true);
 	}
 	FPlatformProcess::ExploreFolder(*Dir);
+	return FReply::Handled();
+}
+
+FReply SWidgetFactoryWindow::OnExportSelected()
+{
+	// 从 Content Browser 获取当前选中的资源
+	FContentBrowserModule& CBModule = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
+	TArray<FAssetData> SelectedAssets;
+	CBModule.Get().GetSelectedAssets(SelectedAssets);
+
+	// 筛选 Widget Blueprint
+	TArray<FAssetData> WidgetAssets;
+	for (const FAssetData& Asset : SelectedAssets)
+	{
+		if (Asset.GetClass() && Asset.GetClass()->IsChildOf(UWidgetBlueprint::StaticClass()))
+		{
+			WidgetAssets.Add(Asset);
+		}
+		else if (Asset.AssetClassPath.GetAssetName().ToString().Contains(TEXT("WidgetBlueprint")))
+		{
+			WidgetAssets.Add(Asset);
+		}
+	}
+
+	if (WidgetAssets.Num() == 0)
+	{
+		if (StatusText.IsValid())
+			StatusText->SetText(FText::FromString(TEXT("请先在 Content Browser 中选中一个 Widget Blueprint")));
+		return FReply::Handled();
+	}
+
+	int32 Ok = 0;
+	for (const FAssetData& Asset : WidgetAssets)
+	{
+		FString AssetPath = Asset.GetObjectPathString();
+		// 去掉末尾的 .ClassName 后缀（如果有）
+		int32 DotIdx;
+		if (AssetPath.FindLastChar('.', DotIdx))
+		{
+			FString After = AssetPath.Mid(DotIdx + 1);
+			FString Before = AssetPath.Left(DotIdx);
+			// 如果 . 后面是类名而不是资源名，取 PackageName
+			if (After != Asset.AssetName.ToString())
+			{
+				AssetPath = Asset.PackageName.ToString();
+			}
+		}
+
+		if (UWidgetFactoryGenerator::ExportToJson(AssetPath))
+			Ok++;
+	}
+
+	if (StatusText.IsValid())
+	{
+		if (Ok > 0)
+		{
+			StatusText->SetText(FText::FromString(
+				FString::Printf(TEXT("导出成功: %d 个 Widget Blueprint → JSON"), Ok)));
+			RefreshList();
+		}
+		else
+		{
+			StatusText->SetText(FText::FromString(TEXT("导出失败，请检查选中的资源是否为 Widget Blueprint")));
+		}
+	}
+
+	// 更新显示
+	if (ExportSourceText.IsValid() && WidgetAssets.Num() > 0)
+	{
+		ExportSourceText->SetText(FText::FromString(WidgetAssets[0].AssetName.ToString()));
+	}
+
 	return FReply::Handled();
 }
 

@@ -628,6 +628,439 @@ void UWidgetFactoryGenerator::AddEventTickNode(UWidgetBlueprint* WidgetBP)
 }
 
 
+// ─── Export: Widget → JSON ───────────────────────────────────────────────────
+
+TSharedPtr<FJsonObject> UWidgetFactoryGenerator::ColorToJson(const FLinearColor& C)
+{
+	auto Obj = MakeShared<FJsonObject>();
+	Obj->SetNumberField(TEXT("R"), FMath::RoundToFloat(C.R * 1000) / 1000);
+	Obj->SetNumberField(TEXT("G"), FMath::RoundToFloat(C.G * 1000) / 1000);
+	Obj->SetNumberField(TEXT("B"), FMath::RoundToFloat(C.B * 1000) / 1000);
+	Obj->SetNumberField(TEXT("A"), FMath::RoundToFloat(C.A * 1000) / 1000);
+	return Obj;
+}
+
+TSharedPtr<FJsonObject> UWidgetFactoryGenerator::MarginToJson(const FMargin& M)
+{
+	auto Obj = MakeShared<FJsonObject>();
+	Obj->SetNumberField(TEXT("Left"), M.Left);
+	Obj->SetNumberField(TEXT("Top"), M.Top);
+	Obj->SetNumberField(TEXT("Right"), M.Right);
+	Obj->SetNumberField(TEXT("Bottom"), M.Bottom);
+	return Obj;
+}
+
+FString UWidgetFactoryGenerator::GetWidgetTypeName(UWidget* Widget)
+{
+	if (!Widget) return TEXT("Unknown");
+	EnsureClassMapInitialized();
+	for (const auto& Pair : GWidgetClassMap)
+	{
+		if (Widget->GetClass() == Pair.Value || Widget->GetClass()->IsChildOf(Pair.Value))
+			return Pair.Key;
+	}
+	return Widget->GetClass()->GetName();
+}
+
+TSharedPtr<FJsonObject> UWidgetFactoryGenerator::ExportPropertiesToJson(UWidget* Widget)
+{
+	if (!Widget) return nullptr;
+	auto Props = MakeShared<FJsonObject>();
+	bool bHasProps = false;
+
+	// Visibility
+	if (Widget->GetVisibility() != ESlateVisibility::Visible)
+	{
+		FString Vis;
+		switch (Widget->GetVisibility())
+		{
+		case ESlateVisibility::Collapsed:           Vis = TEXT("Collapsed"); break;
+		case ESlateVisibility::Hidden:              Vis = TEXT("Hidden"); break;
+		case ESlateVisibility::HitTestInvisible:    Vis = TEXT("HitTestInvisible"); break;
+		case ESlateVisibility::SelfHitTestInvisible:Vis = TEXT("SelfHitTestInvisible"); break;
+		default: break;
+		}
+		if (!Vis.IsEmpty()) { Props->SetStringField(TEXT("Visibility"), Vis); bHasProps = true; }
+	}
+
+	if (Widget->GetRenderOpacity() < 1.0f - KINDA_SMALL_NUMBER)
+	{
+		Props->SetNumberField(TEXT("RenderOpacity"), Widget->GetRenderOpacity());
+		bHasProps = true;
+	}
+
+	// TextBlock
+	if (UTextBlock* TB = Cast<UTextBlock>(Widget))
+	{
+		FString Text = TB->GetText().ToString();
+		if (!Text.IsEmpty()) { Props->SetStringField(TEXT("Text"), Text); bHasProps = true; }
+
+		FSlateFontInfo Font = TB->GetFont();
+		if (Font.Size != 24) { Props->SetNumberField(TEXT("FontSize"), Font.Size); bHasProps = true; }
+
+		FLinearColor Color = TB->GetColorAndOpacity().GetSpecifiedColor();
+		if (Color != FLinearColor::White) { Props->SetObjectField(TEXT("Color"), ColorToJson(Color)); bHasProps = true; }
+
+		if (TB->GetAutoWrapText()) { Props->SetBoolField(TEXT("AutoWrap"), true); bHasProps = true; }
+
+		// Justification — skip export (getter not available in UE5.7)
+	}
+
+	// Image
+	if (UImage* Img = Cast<UImage>(Widget))
+	{
+		FLinearColor Color = Img->GetColorAndOpacity();
+		if (Color != FLinearColor::White) { Props->SetObjectField(TEXT("Color"), ColorToJson(Color)); bHasProps = true; }
+
+		if (Img->GetBrush().GetResourceObject())
+		{
+			Props->SetStringField(TEXT("Brush"), Img->GetBrush().GetResourceObject()->GetPathName());
+			bHasProps = true;
+		}
+	}
+
+	// ProgressBar
+	if (UProgressBar* PB = Cast<UProgressBar>(Widget))
+	{
+		Props->SetNumberField(TEXT("Percent"), PB->GetPercent());
+		Props->SetObjectField(TEXT("FillColor"), ColorToJson(PB->GetFillColorAndOpacity()));
+		bHasProps = true;
+	}
+
+	// Spacer
+	if (USpacer* Sp = Cast<USpacer>(Widget))
+	{
+		FVector2D SpSize = Sp->GetSize();
+		if (SpSize.X > 0 || SpSize.Y > 0)
+		{
+			Props->SetNumberField(TEXT("Size"), SpSize.X);
+			bHasProps = true;
+		}
+	}
+
+	// SizeBox — override values not easily readable at runtime, skip
+
+	return bHasProps ? Props : TSharedPtr<FJsonObject>(nullptr);
+}
+
+TSharedPtr<FJsonObject> UWidgetFactoryGenerator::ExportSlotToJson(UWidget* Widget)
+{
+	if (!Widget || !Widget->Slot) return nullptr;
+	auto SlotJson = MakeShared<FJsonObject>();
+	bool bHasSlot = false;
+
+	// CanvasPanelSlot
+	if (UCanvasPanelSlot* CS = Cast<UCanvasPanelSlot>(Widget->Slot))
+	{
+		FAnchors Anch = CS->GetAnchors();
+		// Try to match named anchors
+		FString AnchName;
+		if      (Anch.Minimum == FVector2D(0,0) && Anch.Maximum == FVector2D(1,1)) AnchName = TEXT("Fill");
+		else if (Anch.Minimum == FVector2D(0.5,0.5) && Anch.Maximum == FVector2D(0.5,0.5)) AnchName = TEXT("Center");
+		else if (Anch.Minimum == FVector2D(0,0) && Anch.Maximum == FVector2D(0,0)) AnchName = TEXT("TopLeft");
+		else if (Anch.Minimum == FVector2D(0.5,0) && Anch.Maximum == FVector2D(0.5,0)) AnchName = TEXT("TopCenter");
+		else if (Anch.Minimum == FVector2D(1,0) && Anch.Maximum == FVector2D(1,0)) AnchName = TEXT("TopRight");
+		else if (Anch.Minimum == FVector2D(0,1) && Anch.Maximum == FVector2D(0,1)) AnchName = TEXT("BottomLeft");
+		else if (Anch.Minimum == FVector2D(0.5,1) && Anch.Maximum == FVector2D(0.5,1)) AnchName = TEXT("BottomCenter");
+		else if (Anch.Minimum == FVector2D(1,1) && Anch.Maximum == FVector2D(1,1)) AnchName = TEXT("BottomRight");
+		else if (Anch.Minimum == FVector2D(0,0.5) && Anch.Maximum == FVector2D(0,0.5)) AnchName = TEXT("CenterLeft");
+		else if (Anch.Minimum == FVector2D(1,0.5) && Anch.Maximum == FVector2D(1,0.5)) AnchName = TEXT("CenterRight");
+		else if (Anch.Minimum == FVector2D(0,0.5) && Anch.Maximum == FVector2D(1,0.5)) AnchName = TEXT("FillHorizontal");
+		else if (Anch.Minimum == FVector2D(0.5,0) && Anch.Maximum == FVector2D(0.5,1)) AnchName = TEXT("FillVertical");
+
+		if (!AnchName.IsEmpty())
+		{
+			SlotJson->SetStringField(TEXT("Anchors"), AnchName);
+		}
+		else
+		{
+			auto AnchObj = MakeShared<FJsonObject>();
+			AnchObj->SetNumberField(TEXT("MinX"), Anch.Minimum.X);
+			AnchObj->SetNumberField(TEXT("MinY"), Anch.Minimum.Y);
+			AnchObj->SetNumberField(TEXT("MaxX"), Anch.Maximum.X);
+			AnchObj->SetNumberField(TEXT("MaxY"), Anch.Maximum.Y);
+			SlotJson->SetObjectField(TEXT("AnchorsCustom"), AnchObj);
+		}
+
+		FVector2D Pos = CS->GetPosition();
+		if (!Pos.IsNearlyZero())
+		{
+			auto PosObj = MakeShared<FJsonObject>();
+			PosObj->SetNumberField(TEXT("X"), Pos.X);
+			PosObj->SetNumberField(TEXT("Y"), Pos.Y);
+			SlotJson->SetObjectField(TEXT("Position"), PosObj);
+		}
+
+		FVector2D Size = CS->GetSize();
+		if (Size.X > 0 || Size.Y > 0)
+		{
+			auto SizeObj = MakeShared<FJsonObject>();
+			SizeObj->SetNumberField(TEXT("Width"), Size.X);
+			SizeObj->SetNumberField(TEXT("Height"), Size.Y);
+			SlotJson->SetObjectField(TEXT("Size"), SizeObj);
+		}
+
+		FVector2D Align = CS->GetAlignment();
+		// Only export non-default alignment (skip if it matches the anchor preset default)
+		bool bDefaultAlign = false;
+		if (AnchName == TEXT("TopLeft") && Align.IsNearlyZero()) bDefaultAlign = true;
+		else if (AnchName == TEXT("Center") && Align.Equals(FVector2D(0.5, 0.5), 0.01)) bDefaultAlign = true;
+		else if (AnchName == TEXT("Fill") && Align.IsNearlyZero()) bDefaultAlign = true;
+		else if (Align.IsNearlyZero()) bDefaultAlign = true;
+
+		if (!bDefaultAlign)
+		{
+			auto AlignObj = MakeShared<FJsonObject>();
+			AlignObj->SetNumberField(TEXT("X"), Align.X);
+			AlignObj->SetNumberField(TEXT("Y"), Align.Y);
+			SlotJson->SetObjectField(TEXT("Alignment"), AlignObj);
+		}
+
+		if (AnchName == TEXT("Fill"))
+		{
+			// For Fill anchors, offsets represent margins
+			FMargin Offsets = CS->GetOffsets();
+			if (FMath::Abs(Offsets.Left) > 0.1f || FMath::Abs(Offsets.Top) > 0.1f ||
+				FMath::Abs(Offsets.Right) > 0.1f || FMath::Abs(Offsets.Bottom) > 0.1f)
+				SlotJson->SetObjectField(TEXT("Offsets"), MarginToJson(Offsets));
+		}
+		// Also export offsets for custom anchors with stretch
+		if (!AnchName.IsEmpty() && AnchName != TEXT("Fill"))
+		{
+			// non-Fill named anchors: offsets not needed
+		}
+		else if (AnchName.IsEmpty())
+		{
+			// Custom anchors: export offsets if stretch involved
+			FAnchors A = CS->GetAnchors();
+			if (!FMath::IsNearlyEqual(A.Minimum.X, A.Maximum.X) || !FMath::IsNearlyEqual(A.Minimum.Y, A.Maximum.Y))
+			{
+				FMargin Offsets = CS->GetOffsets();
+				if (FMath::Abs(Offsets.Left) > 0.1f || FMath::Abs(Offsets.Top) > 0.1f ||
+					FMath::Abs(Offsets.Right) > 0.1f || FMath::Abs(Offsets.Bottom) > 0.1f)
+					SlotJson->SetObjectField(TEXT("Offsets"), MarginToJson(Offsets));
+			}
+		}
+
+		if (!CS->GetAutoSize())
+			SlotJson->SetBoolField(TEXT("AutoSize"), false);
+
+		if (CS->GetZOrder() != 0)
+			SlotJson->SetNumberField(TEXT("ZOrder"), CS->GetZOrder());
+
+		bHasSlot = true;
+	}
+
+	// HorizontalBoxSlot
+	if (UHorizontalBoxSlot* HS = Cast<UHorizontalBoxSlot>(Widget->Slot))
+	{
+		FSlateChildSize Size = HS->GetSize();
+		if (Size.SizeRule == ESlateSizeRule::Fill)
+		{
+			SlotJson->SetStringField(TEXT("SizeRule"), TEXT("Fill"));
+			if (!FMath::IsNearlyEqual(Size.Value, 1.0f))
+				SlotJson->SetNumberField(TEXT("FillWidth"), Size.Value);
+		}
+		else
+		{
+			SlotJson->SetStringField(TEXT("SizeRule"), TEXT("Auto"));
+		}
+		if (HS->GetHorizontalAlignment() != HAlign_Fill)
+		{
+			FString HA = HS->GetHorizontalAlignment() == HAlign_Center ? TEXT("Center") :
+			             HS->GetHorizontalAlignment() == HAlign_Right ? TEXT("Right") : TEXT("Left");
+			SlotJson->SetStringField(TEXT("HAlign"), HA);
+		}
+		if (HS->GetVerticalAlignment() != VAlign_Fill)
+		{
+			FString VA = HS->GetVerticalAlignment() == VAlign_Center ? TEXT("Center") :
+			             HS->GetVerticalAlignment() == VAlign_Bottom ? TEXT("Bottom") : TEXT("Top");
+			SlotJson->SetStringField(TEXT("VAlign"), VA);
+		}
+		FMargin Pad = HS->GetPadding();
+		if (Pad.Left != 0 || Pad.Top != 0 || Pad.Right != 0 || Pad.Bottom != 0)
+			SlotJson->SetObjectField(TEXT("Padding"), MarginToJson(Pad));
+		bHasSlot = true;
+	}
+
+	// VerticalBoxSlot
+	if (UVerticalBoxSlot* VS = Cast<UVerticalBoxSlot>(Widget->Slot))
+	{
+		FSlateChildSize Size = VS->GetSize();
+		if (Size.SizeRule == ESlateSizeRule::Fill)
+		{
+			SlotJson->SetStringField(TEXT("SizeRule"), TEXT("Fill"));
+			if (!FMath::IsNearlyEqual(Size.Value, 1.0f))
+				SlotJson->SetNumberField(TEXT("FillHeight"), Size.Value);
+		}
+		else
+		{
+			SlotJson->SetStringField(TEXT("SizeRule"), TEXT("Auto"));
+		}
+		if (VS->GetHorizontalAlignment() != HAlign_Fill)
+		{
+			FString HA = VS->GetHorizontalAlignment() == HAlign_Center ? TEXT("Center") :
+			             VS->GetHorizontalAlignment() == HAlign_Right ? TEXT("Right") : TEXT("Left");
+			SlotJson->SetStringField(TEXT("HAlign"), HA);
+		}
+		if (VS->GetVerticalAlignment() != VAlign_Fill)
+		{
+			FString VA = VS->GetVerticalAlignment() == VAlign_Center ? TEXT("Center") :
+			             VS->GetVerticalAlignment() == VAlign_Bottom ? TEXT("Bottom") : TEXT("Top");
+			SlotJson->SetStringField(TEXT("VAlign"), VA);
+		}
+		FMargin Pad = VS->GetPadding();
+		if (Pad.Left != 0 || Pad.Top != 0 || Pad.Right != 0 || Pad.Bottom != 0)
+			SlotJson->SetObjectField(TEXT("Padding"), MarginToJson(Pad));
+		bHasSlot = true;
+	}
+
+	return bHasSlot ? SlotJson : TSharedPtr<FJsonObject>(nullptr);
+}
+
+TSharedPtr<FJsonObject> UWidgetFactoryGenerator::ExportWidgetToJson(UWidget* Widget)
+{
+	if (!Widget) return nullptr;
+
+	auto Json = MakeShared<FJsonObject>();
+	Json->SetStringField(TEXT("Type"), GetWidgetTypeName(Widget));
+	Json->SetStringField(TEXT("Name"), Widget->GetName());
+
+	if (Widget->bIsVariable)
+		Json->SetBoolField(TEXT("IsVariable"), true);
+
+	// Slot
+	auto SlotJson = ExportSlotToJson(Widget);
+	if (SlotJson.IsValid())
+		Json->SetObjectField(TEXT("Slot"), SlotJson);
+
+	// Properties
+	auto PropsJson = ExportPropertiesToJson(Widget);
+	if (PropsJson.IsValid())
+		Json->SetObjectField(TEXT("Properties"), PropsJson);
+
+	// Children
+	if (UPanelWidget* Panel = Cast<UPanelWidget>(Widget))
+	{
+		if (Panel->GetChildrenCount() > 0)
+		{
+			TArray<TSharedPtr<FJsonValue>> ChildArray;
+			for (int32 i = 0; i < Panel->GetChildrenCount(); i++)
+			{
+				auto ChildJson = ExportWidgetToJson(Panel->GetChildAt(i));
+				if (ChildJson.IsValid())
+					ChildArray.Add(MakeShared<FJsonValueObject>(ChildJson));
+			}
+			if (ChildArray.Num() > 0)
+				Json->SetArrayField(TEXT("Children"), ChildArray);
+		}
+	}
+
+	return Json;
+}
+
+FString UWidgetFactoryGenerator::GetUnLuaModuleName(UWidgetBlueprint* WidgetBP)
+{
+#if WITH_UNLUA
+	if (!WidgetBP) return TEXT("");
+
+	TArray<UEdGraph*> AllGraphs;
+	AllGraphs.Append(WidgetBP->FunctionGraphs);
+	for (FBPInterfaceDescription& Iface : WidgetBP->ImplementedInterfaces)
+		AllGraphs.Append(Iface.Graphs);
+
+	for (UEdGraph* Graph : AllGraphs)
+	{
+		if (Graph && Graph->GetFName().ToString().Contains(TEXT("GetModuleName")))
+		{
+			for (UEdGraphNode* Node : Graph->Nodes)
+			{
+				UK2Node_FunctionResult* ResultNode = Cast<UK2Node_FunctionResult>(Node);
+				if (!ResultNode) continue;
+				for (UEdGraphPin* Pin : ResultNode->Pins)
+				{
+					if (Pin->Direction == EGPD_Input && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_String)
+						return Pin->DefaultValue;
+				}
+			}
+		}
+	}
+#endif
+	return TEXT("");
+}
+
+bool UWidgetFactoryGenerator::ExportToJson(const FString& WidgetPath, const FString& OutputFileName)
+{
+	UE_LOG(LogWidgetFactory, Log, TEXT("════════════════════════════════════════"));
+	UE_LOG(LogWidgetFactory, Log, TEXT("开始导出: %s"), *WidgetPath);
+	UE_LOG(LogWidgetFactory, Log, TEXT("════════════════════════════════════════"));
+
+	UWidgetBlueprint* WidgetBP = LoadObject<UWidgetBlueprint>(nullptr, *WidgetPath);
+	if (!WidgetBP)
+	{
+		// Try appending _C or common suffixes
+		FString TryPath = WidgetPath + TEXT(".") + FPaths::GetBaseFilename(WidgetPath);
+		WidgetBP = LoadObject<UWidgetBlueprint>(nullptr, *TryPath);
+	}
+	if (!WidgetBP)
+	{
+		UE_LOG(LogWidgetFactory, Error, TEXT("无法加载 Widget Blueprint: %s"), *WidgetPath);
+		return false;
+	}
+
+	UWidgetTree* Tree = WidgetBP->WidgetTree;
+	if (!Tree || !Tree->RootWidget)
+	{
+		UE_LOG(LogWidgetFactory, Error, TEXT("Widget Blueprint 没有控件树"));
+		return false;
+	}
+
+	// Build root JSON
+	auto Config = MakeShared<FJsonObject>();
+	Config->SetStringField(TEXT("WidgetName"), WidgetBP->GetName());
+	Config->SetStringField(TEXT("Description"), FString::Printf(TEXT("从 %s 导出"), *WidgetBP->GetName()));
+
+	// Export widget tree
+	auto RootJson = ExportWidgetToJson(Tree->RootWidget);
+	if (RootJson.IsValid())
+		Config->SetObjectField(TEXT("RootWidget"), RootJson);
+
+	// UnLua binding
+	FString ModuleName = GetUnLuaModuleName(WidgetBP);
+	if (!ModuleName.IsEmpty())
+	{
+		auto UnLuaJson = MakeShared<FJsonObject>();
+		UnLuaJson->SetBoolField(TEXT("Enabled"), true);
+		UnLuaJson->SetStringField(TEXT("ModuleName"), ModuleName);
+		UnLuaJson->SetBoolField(TEXT("AddEventTick"), true);
+		Config->SetObjectField(TEXT("UnLuaBinding"), UnLuaJson);
+	}
+
+	// Serialize to string
+	FString OutputStr;
+	TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> Writer = TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&OutputStr);
+	Writer->WriteObjectStart();
+	for (const auto& Pair : Config->Values)
+	{
+		FJsonSerializer::Serialize(Pair.Value, Pair.Key, *Writer, true);
+	}
+	Writer->WriteObjectEnd();
+	Writer->Close();
+
+	// Write file
+	FString FileName = OutputFileName.IsEmpty() ? WidgetBP->GetName() : OutputFileName;
+	FString OutputPath = GetTemplateDirectory() / (FileName + TEXT(".json"));
+	if (FFileHelper::SaveStringToFile(OutputStr, *OutputPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+	{
+		UE_LOG(LogWidgetFactory, Log, TEXT("导出成功: %s"), *OutputPath);
+		return true;
+	}
+
+	UE_LOG(LogWidgetFactory, Error, TEXT("写入文件失败: %s"), *OutputPath);
+	return false;
+}
+
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 UWidgetBlueprint* UWidgetFactoryGenerator::GenerateFromJson(const FString& JsonFileName, const FString& PackagePath)

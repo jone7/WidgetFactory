@@ -30,6 +30,7 @@ private:
 	void RefreshList();
 	FReply OnGenerateSelected();
 	FReply OnGenerateAll();
+	FReply OnExportSelected();
 	FReply OnRefresh();
 	FReply OnOpenTemplateFolder();
 	void OnCheckChanged(ECheckBoxState State, TSharedPtr<FWidgetTemplateItem> Item);
@@ -40,6 +41,7 @@ private:
 	TArray<TSharedPtr<FWidgetTemplateItem>> Items;
 	TSharedPtr<SListView<TSharedPtr<FWidgetTemplateItem>>> ListView;
 	TSharedPtr<class STextBlock> StatusText;
+	TSharedPtr<class STextBlock> ExportSourceText;
 };
 
 class FWidgetFactoryTabManager

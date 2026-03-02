@@ -26,7 +26,8 @@ public class WidgetFactory : ModuleRules
 			"BlueprintGraph",
 			"ToolMenus",
 			"InputCore",
-			"Projects"
+			"Projects",
+			"ContentBrowser"
 		});
 
 		// UnLua optional support: link only if the module exists

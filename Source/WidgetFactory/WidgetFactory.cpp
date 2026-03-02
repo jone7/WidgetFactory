@@ -69,6 +69,22 @@ void FWidgetFactoryModule::RegisterConsoleCommands()
 			UWidgetFactoryGenerator::SetTemplateDirectory(Args[0]);
 		}),
 		ECVF_Default);
+
+	IConsoleManager::Get().RegisterConsoleCommand(
+		TEXT("WidgetFactory.Export"),
+		TEXT("从 Widget Blueprint 导出 JSON 模板。用法: WidgetFactory.Export <资源路径> [输出文件名]  例: WidgetFactory.Export /Game/UI/WBP_GameHUD"),
+		FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+		{
+			if (Args.Num() < 1)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("用法: WidgetFactory.Export <资源路径> [输出文件名]"));
+				UE_LOG(LogTemp, Log, TEXT("例: WidgetFactory.Export /Game/UI/WBP_GameHUD"));
+				return;
+			}
+			FString OutputName = Args.Num() >= 2 ? Args[1] : TEXT("");
+			UWidgetFactoryGenerator::ExportToJson(Args[0], OutputName);
+		}),
+		ECVF_Default);
 }
 
 void FWidgetFactoryModule::UnregisterConsoleCommands()
@@ -76,6 +92,7 @@ void FWidgetFactoryModule::UnregisterConsoleCommands()
 	IConsoleManager::Get().UnregisterConsoleObject(TEXT("WidgetFactory.Generate"));
 	IConsoleManager::Get().UnregisterConsoleObject(TEXT("WidgetFactory.GenerateAll"));
 	IConsoleManager::Get().UnregisterConsoleObject(TEXT("WidgetFactory.SetTemplateDir"));
+	IConsoleManager::Get().UnregisterConsoleObject(TEXT("WidgetFactory.Export"));
 }
 
 void FWidgetFactoryModule::RegisterMenu()

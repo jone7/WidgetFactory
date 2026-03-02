@@ -46,6 +46,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "WidgetFactory")
 	static void GenerateAllWidgets(const FString& PackagePath = TEXT("/Game/UI"));
 
+	/**
+	 * 从已有 Widget Blueprint 导出 JSON 模板（反向工程）
+	 * @param WidgetPath  资源路径，如 /Game/UI/WBP_GameHUD
+	 * @param OutputFileName  输出文件名（不含路径和扩展名），为空则使用资源名
+	 * @return 是否导出成功
+	 */
+	UFUNCTION(BlueprintCallable, Category = "WidgetFactory")
+	static bool ExportToJson(
+		const FString& WidgetPath,
+		const FString& OutputFileName = TEXT(""));
+
 	/** 获取当前模板目录（绝对路径） */
 	static FString GetTemplateDirectory();
 
@@ -71,4 +82,13 @@ private:
 	// UnLua 绑定（仅在 WITH_UNLUA=1 时有实际实现）
 	static void SetupUnLuaBinding(UWidgetBlueprint* WidgetBP, const TSharedPtr<FJsonObject>& UnLuaConfig);
 	static void AddEventTickNode(UWidgetBlueprint* WidgetBP);
+
+	// 导出相关
+	static TSharedPtr<FJsonObject> ExportWidgetToJson(UWidget* Widget);
+	static TSharedPtr<FJsonObject> ExportSlotToJson(UWidget* Widget);
+	static TSharedPtr<FJsonObject> ExportPropertiesToJson(UWidget* Widget);
+	static FString GetWidgetTypeName(UWidget* Widget);
+	static TSharedPtr<FJsonObject> ColorToJson(const FLinearColor& Color);
+	static TSharedPtr<FJsonObject> MarginToJson(const FMargin& Margin);
+	static FString GetUnLuaModuleName(UWidgetBlueprint* WidgetBP);
 };

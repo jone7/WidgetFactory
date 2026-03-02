@@ -1,0 +1,30 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0.0",
+	"FriendlyName": "Widget Factory",
+	"Description": "Generate UMG Widget Blueprints from JSON templates. Define your UI layout in JSON, auto-create all widgets, slots, properties, and variable bindings.",
+	"Category": "Editor",
+	"CreatedBy": "Cooker Team",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "WidgetFactory",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "UnLua",
+			"Enabled": true,
+			"Optional": true
+		}
+	]
+}

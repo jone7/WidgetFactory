@@ -1,0 +1,12 @@
+/NOLOGO
+/errorReport:prompt
+/MACHINE:x64
+/SUBSYSTEM:WINDOWS
+/DEF
+/NAME:"UnrealEditor-WidgetFactory.dll"
+/IGNORE:4221
+/NODEFAULTLIB
+"F:/MS/cooker/Intermediate/Build/Win64/x64/cookerEditor/Development/UnrealEd/SharedPCH.UnrealEd.Project.ValApi.ValExpApi.Cpp20.h.obj"
+"F:/MS/cooker/Plugins/WidgetFactory/Intermediate/Build/Win64/x64/UnrealEditor/Development/WidgetFactory/Module.WidgetFactory.cpp.obj"
+"F:/MS/cooker/Plugins/WidgetFactory/Intermediate/Build/Win64/x64/UnrealEditor/Development/WidgetFactory/Default.rc2.res"
+/OUT:"F:/MS/cooker/Plugins/WidgetFactory/Intermediate/Build/Win64/x64/UnrealEditor/Development/WidgetFactory/UnrealEditor-WidgetFactory.lib"

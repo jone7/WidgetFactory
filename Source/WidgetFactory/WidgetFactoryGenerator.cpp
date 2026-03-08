@@ -46,6 +46,9 @@
 #include "HAL/PlatformFileManager.h"
 #include "Interfaces/IPluginManager.h"
 #include "Internationalization/Regex.h"
+#include "Subsystems/AssetEditorSubsystem.h"
+#include "UObject/LinkerLoad.h"
+#include "Editor.h"
 
 #if WITH_UNLUA
 #include "UnLuaInterface.h"
@@ -164,19 +167,59 @@ UWidgetBlueprint* UWidgetFactoryGenerator::CreateWidgetBlueprint(const FString& 
 	{
 		UE_LOG(LogWidgetFactory, Warning, TEXT("覆盖已有资源: %s"), *FullPath);
 
+		// 1. 关闭该资产的编辑器 Tab（防止编辑器持有引用导致 GC 悬空指针）
 		UPackage* OldPkg = FindPackage(nullptr, *FullPath);
 		if (OldPkg)
 		{
-			OldPkg->ClearFlags(RF_Standalone);
-			OldPkg->SetFlags(RF_Transient);
-			TArray<UObject*> ToDelete;
-			ForEachObjectWithPackage(OldPkg, [&ToDelete](UObject* Obj) { ToDelete.Add(Obj); return true; }, false);
-			for (UObject* Obj : ToDelete)
+			TArray<UObject*> AssetsInPkg;
+			ForEachObjectWithPackage(OldPkg, [&AssetsInPkg](UObject* Obj) { AssetsInPkg.Add(Obj); return true; }, false);
+
+			// 关闭所有引用该资产的编辑器
+			for (UObject* Obj : AssetsInPkg)
 			{
-				if (Obj) { Obj->ClearFlags(RF_Standalone | RF_Public); Obj->SetFlags(RF_Transient); Obj->MarkAsGarbage(); }
+				if (Obj && Obj->IsAsset())
+				{
+					GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->CloseAllEditorsForAsset(Obj);
+				}
 			}
+
+			// 2. 将旧 Package 重命名到临时路径（避免同名冲突），清除引用
+			FString TrashName = FString::Printf(TEXT("/Temp/WidgetFactory_Trash_%s_%d"), *WidgetName, FMath::Rand());
+			if (OldPkg->Rename(*TrashName, nullptr, REN_DontCreateRedirectors | REN_NonTransactional | REN_ForceNoResetLoaders))
+			{
+				OldPkg->ClearFlags(RF_Standalone | RF_Public);
+				OldPkg->SetFlags(RF_Transient);
+				for (UObject* Obj : AssetsInPkg)
+				{
+					if (Obj)
+					{
+						Obj->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional | REN_ForceNoResetLoaders);
+						Obj->ClearFlags(RF_Standalone | RF_Public);
+						Obj->SetFlags(RF_Transient);
+						Obj->MarkAsGarbage();
+					}
+				}
+				OldPkg->MarkAsGarbage();
+			}
+			else
+			{
+				// Rename 失败，回退到旧方式
+				UE_LOG(LogWidgetFactory, Warning, TEXT("Rename 旧 Package 失败，尝试直接清理"));
+				for (UObject* Obj : AssetsInPkg)
+				{
+					if (Obj) { Obj->ClearFlags(RF_Standalone | RF_Public); Obj->SetFlags(RF_Transient); Obj->MarkAsGarbage(); }
+				}
+				OldPkg->ClearFlags(RF_Standalone);
+				OldPkg->SetFlags(RF_Transient);
+				OldPkg->MarkAsGarbage();
+			}
+
 			CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
+
+			// 3. 释放文件句柄
+			ResetLoaders(OldPkg);
 		}
+
 		IFileManager::Get().Delete(*AssetFile, false, true);
 	}
 

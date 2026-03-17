@@ -1,6 +1,6 @@
 {
   "WidgetName": "WBP_ExamplePanel",
-  "Description": "示例模板 - 展示 Widget Factory 功能",
+  "Description": "Example template - demonstrates Widget Factory features",
   "RootWidget": {
     "Type": "CanvasPanel",
     "Name": "Root",
@@ -14,103 +14,106 @@
         }
       },
       {
-        "Type": "VerticalBox",
+        "Type": "CanvasPanel",
         "Name": "MainContainer",
         "Slot": {
           "Anchors": "Center",
-          "Size": { "Width": 800, "Height": 600 }
+          "Size": { "Width": 800, "Height": 600 },
+          "Alignment": { "X": 0.5, "Y": 0.5 }
         },
         "Children": [
           {
-            "Type": "HorizontalBox",
-            "Name": "TitleBar",
-            "Slot": { "SizeRule": "Auto", "Padding": { "Left": 10, "Top": 10, "Right": 10, "Bottom": 5 } },
+            "Type": "TextBlock",
+            "Name": "TextTitle",
+            "IsVariable": true,
+            "Slot": {
+              "Anchors": "TopLeft",
+              "Position": { "X": 20, "Y": 15 }
+            },
+            "Properties": {
+              "Text": "Panel Title",
+              "FontSize": 24,
+              "Color": { "R": 1.0, "G": 1.0, "B": 1.0, "A": 1.0 }
+            }
+          },
+          {
+            "Type": "Button",
+            "Name": "BtnClose",
+            "IsVariable": true,
+            "Slot": {
+              "Anchors": "TopRight",
+              "Position": { "X": -10, "Y": 10 },
+              "Size": { "Width": 40, "Height": 40 },
+              "Alignment": { "X": 1.0, "Y": 0.0 }
+            },
             "Children": [
               {
                 "Type": "TextBlock",
-                "Name": "TextTitle",
-                "IsVariable": true,
-                "Slot": { "SizeRule": "Auto", "VAlign": "Center" },
-                "Properties": {
-                  "Text": "标题",
-                  "FontSize": 24,
-                  "Color": { "R": 1.0, "G": 1.0, "B": 1.0, "A": 1.0 }
-                }
-              },
-              {
-                "Type": "Spacer",
-                "Slot": { "SizeRule": "Fill", "FillWidth": 1.0 }
-              },
-              {
-                "Type": "Button",
-                "Name": "BtnClose",
-                "IsVariable": true,
-                "Slot": { "SizeRule": "Auto", "VAlign": "Center" },
-                "Children": [
-                  {
-                    "Type": "TextBlock",
-                    "Properties": { "Text": "X", "FontSize": 18 }
-                  }
-                ]
+                "Properties": { "Text": "X", "FontSize": 18 }
               }
             ]
           },
           {
-            "Type": "HorizontalBox",
-            "Name": "ContentArea",
-            "Slot": { "SizeRule": "Fill", "FillHeight": 1.0, "Padding": { "Left": 10, "Top": 5, "Right": 10, "Bottom": 10 } },
+            "Type": "ScrollBox",
+            "Name": "ItemList",
+            "Slot": {
+              "Anchors": "TopLeft",
+              "Position": { "X": 10, "Y": 60 },
+              "Size": { "Width": 300, "Height": 520 }
+            },
             "Children": [
               {
-                "Type": "ScrollBox",
-                "Slot": { "SizeRule": "Fill", "FillWidth": 0.4 },
-                "Children": [
-                  {
-                    "Type": "VerticalBox",
-                    "Name": "ItemListBox",
-                    "IsVariable": true
-                  }
-                ]
+                "Type": "CanvasPanel",
+                "Name": "ItemListBox",
+                "IsVariable": true
+              }
+            ]
+          },
+          {
+            "Type": "CanvasPanel",
+            "Name": "DetailPanel",
+            "IsVariable": true,
+            "Slot": {
+              "Anchors": "TopLeft",
+              "Position": { "X": 330, "Y": 60 },
+              "Size": { "Width": 450, "Height": 520 }
+            },
+            "Properties": { "Visibility": "Collapsed" },
+            "Children": [
+              {
+                "Type": "TextBlock",
+                "Name": "TextDetailName",
+                "IsVariable": true,
+                "Slot": {
+                  "Anchors": "TopLeft",
+                  "Position": { "X": 10, "Y": 10 }
+                },
+                "Properties": { "Text": "Select an item", "FontSize": 20 }
               },
               {
-                "Type": "VerticalBox",
-                "Name": "DetailPanel",
+                "Type": "TextBlock",
+                "Name": "TextDetailDesc",
                 "IsVariable": true,
-                "Slot": { "SizeRule": "Fill", "FillWidth": 0.6, "Padding": { "Left": 20, "Top": 0, "Right": 0, "Bottom": 0 } },
-                "Properties": { "Visibility": "Collapsed" },
+                "Slot": {
+                  "Anchors": "TopLeft",
+                  "Position": { "X": 10, "Y": 50 },
+                  "Size": { "Width": 430, "Height": 300 }
+                },
+                "Properties": { "Text": "", "FontSize": 14, "AutoWrap": true }
+              },
+              {
+                "Type": "Button",
+                "Name": "BtnAction",
+                "IsVariable": true,
+                "Slot": {
+                  "Anchors": "BottomLeft",
+                  "Position": { "X": 10, "Y": -50 },
+                  "Size": { "Width": 120, "Height": 40 }
+                },
                 "Children": [
                   {
                     "Type": "TextBlock",
-                    "Name": "TextDetailName",
-                    "IsVariable": true,
-                    "Properties": { "Text": "选择一个项目", "FontSize": 20 }
-                  },
-                  {
-                    "Type": "TextBlock",
-                    "Name": "TextDetailDesc",
-                    "IsVariable": true,
-                    "Properties": { "Text": "", "FontSize": 14, "AutoWrap": true }
-                  },
-                  {
-                    "Type": "Spacer",
-                    "Slot": { "SizeRule": "Fill", "FillHeight": 1.0 }
-                  },
-                  {
-                    "Type": "Button",
-                    "Name": "BtnAction",
-                    "IsVariable": true,
-                    "Slot": { "SizeRule": "Auto", "HAlign": "Left" },
-                    "Children": [
-                      {
-                        "Type": "TextBlock",
-                        "Properties": { "Text": "确认", "FontSize": 16 }
-                      }
-                    ]
-                  },
-                  {
-                    "Type": "TextBlock",
-                    "Name": "TextMessage",
-                    "IsVariable": true,
-                    "Properties": { "Text": "", "FontSize": 14 }
+                    "Properties": { "Text": "Confirm", "FontSize": 16 }
                   }
                 ]
               }
@@ -123,6 +126,6 @@
   "UnLuaBinding": {
     "Enabled": false,
     "ModuleName": "WBP_ExamplePanel_C",
-    "_comment": "设置 Enabled 为 true 可自动绑定 UnLua（需安装 UnLua 插件）"
+    "_comment": "Set Enabled to true to auto-bind UnLua (requires UnLua plugin)"
   }
 }

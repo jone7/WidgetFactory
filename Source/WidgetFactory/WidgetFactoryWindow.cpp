@@ -342,7 +342,7 @@ FReply SWidgetFactoryWindow::OnExportSelected()
 	TArray<FAssetData> SelectedAssets;
 	CBModule.Get().GetSelectedAssets(SelectedAssets);
 
-	// 筛选 Widget Blueprint
+	// Filter Widget Blueprints
 	TArray<FAssetData> WidgetAssets;
 	for (const FAssetData& Asset : SelectedAssets)
 	{
@@ -350,10 +350,17 @@ FReply SWidgetFactoryWindow::OnExportSelected()
 		{
 			WidgetAssets.Add(Asset);
 		}
+#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 1
 		else if (Asset.AssetClassPath.GetAssetName().ToString().Contains(TEXT("WidgetBlueprint")))
 		{
 			WidgetAssets.Add(Asset);
 		}
+#else
+		else if (Asset.AssetClass.ToString().Contains(TEXT("WidgetBlueprint")))
+		{
+			WidgetAssets.Add(Asset);
+		}
+#endif
 	}
 
 	if (WidgetAssets.Num() == 0)
@@ -366,7 +373,11 @@ FReply SWidgetFactoryWindow::OnExportSelected()
 	int32 Ok = 0;
 	for (const FAssetData& Asset : WidgetAssets)
 	{
+#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 1
 		FString AssetPath = Asset.GetObjectPathString();
+#else
+		FString AssetPath = Asset.ObjectPath.ToString();
+#endif
 		// 去掉末尾的 .ClassName 后缀（如果有）
 		int32 DotIdx;
 		if (AssetPath.FindLastChar('.', DotIdx))

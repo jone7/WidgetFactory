@@ -619,8 +619,12 @@ void UWidgetFactoryGenerator::SetupUnLuaBinding(UWidgetBlueprint* WidgetBP, cons
 		InterfaceDesc.Interface = UnLuaInterfaceClass;
 		WidgetBP->ImplementedInterfaces.Add(InterfaceDesc);
 
+#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 1
 		FTopLevelAssetPath InterfacePath(UnLuaInterfaceClass->GetPackage()->GetFName(), UnLuaInterfaceClass->GetFName());
 		FBlueprintEditorUtils::ImplementNewInterface(WidgetBP, InterfacePath);
+#else
+		FBlueprintEditorUtils::ImplementNewInterface(WidgetBP, FName(*UnLuaInterfaceClass->GetPathName()));
+#endif
 		UE_LOG(LogWidgetFactory, Log, TEXT("已添加 UnLuaInterface: %s"), *WidgetBP->GetName());
 	}
 

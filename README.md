@@ -4,6 +4,12 @@ Generate UMG Widget Blueprints from JSON templates.
 
 Define your UI layout in a JSON file — widget tree, properties, slot settings, variable bindings — and let Widget Factory create the complete Widget Blueprint automatically.
 
+## Compatibility
+
+- Unreal Engine 5.3, 5.4, 5.5, 5.6, 5.7+
+- Windows / Mac / Linux (Editor only)
+- Optional UnLua integration (auto-detected at compile time)
+
 ## Quick Start
 
 1. Enable the plugin in your `.uproject`
@@ -113,3 +119,50 @@ Slot properties depend on the parent container:
 
 ### All widgets
 `Visibility` ("Visible"/"Collapsed"/"Hidden"/"HitTestInvisible"/"SelfHitTestInvisible"), `RenderOpacity`
+
+
+## License
+
+This plugin is commercially licensed. See [LICENSE](LICENSE) for details.  
+Available on [Fab](https://fab.com) (Unreal Engine Marketplace).
+
+---
+
+# Widget Factory（中文）
+
+从 JSON 模板自动生成 UMG Widget Blueprint。
+
+在 JSON 文件中定义 UI 布局（控件树、属性、Slot 设置、变量绑定），Widget Factory 自动创建完整的 Widget Blueprint。
+
+## 兼容性
+
+- Unreal Engine 5.3、5.4、5.5、5.6、5.7+
+- Windows / Mac / Linux（仅编辑器）
+- 可选 UnLua 集成（编译时自动检测）
+
+## 快速上手
+
+1. 在 `.uproject` 中启用插件
+2. 在 `Config/WidgetTemplates/` 创建 JSON 模板
+3. 编辑器中：**工具 → Widget Factory** → 选择模板 → 生成
+
+## 使用方式
+
+### 编辑器窗口
+**工具 → Widget Factory** 打开面板，可以：
+- 查看 `Config/WidgetTemplates/` 下所有模板
+- 选择要生成的模板
+- 设置输出路径（默认 `/Game/UI`）
+- 直接打开模板文件夹
+
+### 控制台命令
+```
+WidgetFactory.Generate ShopPanel              # 生成到 /Game/UI
+WidgetFactory.Generate ShopPanel /Game/Widgets # 自定义输出路径
+WidgetFactory.GenerateAll                     # 生成所有模板
+```
+
+## 许可证
+
+本插件为商业授权，详见 [LICENSE](LICENSE)。  
+可在 [Fab](https://fab.com)（Unreal Engine 商城）购买。

@@ -10,7 +10,6 @@
 	"DocsURL": "https://github.com/jone7/WidgetFactory",
 	"MarketplaceURL": "",
 	"SupportURL": "https://github.com/jone7/WidgetFactory/issues",
-	"EngineVersion": "5.3.0",
 	"EnabledByDefault": false,
 	"CanContainContent": false,
 	"IsBetaVersion": false,

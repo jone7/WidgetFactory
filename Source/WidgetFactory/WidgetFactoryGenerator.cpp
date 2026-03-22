@@ -185,6 +185,46 @@ UWidgetBlueprint* UWidgetFactoryGenerator::CreateWidgetBlueprint(const FString& 
 
 			// 2. 将旧 Package 重命名到临时路径（避免同名冲突），清除引用
 			FString TrashName = FString::Printf(TEXT("/Temp/WidgetFactory_Trash_%s_%d"), *WidgetName, FMath::Rand());
+
+			// 2a. 先清理 Blueprint 的 GeneratedClass/CDO（防止 GC 悬空指针）
+			for (UObject* Obj : AssetsInPkg)
+			{
+				UBlueprint* AsBP = Cast<UBlueprint>(Obj);
+				if (AsBP)
+				{
+					if (AsBP->GeneratedClass)
+					{
+						UClass* OldClass = AsBP->GeneratedClass;
+						UObject* OldCDO = OldClass->GetDefaultObject(false);
+						if (OldCDO)
+						{
+							OldCDO->ClearFlags(RF_Standalone | RF_Public);
+							OldCDO->SetFlags(RF_Transient);
+							OldCDO->MarkAsGarbage();
+						}
+						OldClass->ClearFlags(RF_Standalone | RF_Public);
+						OldClass->SetFlags(RF_Transient);
+						OldClass->MarkAsGarbage();
+						AsBP->GeneratedClass = nullptr;
+					}
+					if (AsBP->SkeletonGeneratedClass)
+					{
+						UClass* OldSkel = AsBP->SkeletonGeneratedClass;
+						UObject* OldSkelCDO = OldSkel->GetDefaultObject(false);
+						if (OldSkelCDO)
+						{
+							OldSkelCDO->ClearFlags(RF_Standalone | RF_Public);
+							OldSkelCDO->SetFlags(RF_Transient);
+							OldSkelCDO->MarkAsGarbage();
+						}
+						OldSkel->ClearFlags(RF_Standalone | RF_Public);
+						OldSkel->SetFlags(RF_Transient);
+						OldSkel->MarkAsGarbage();
+						AsBP->SkeletonGeneratedClass = nullptr;
+					}
+				}
+			}
+
 			if (OldPkg->Rename(*TrashName, nullptr, REN_DontCreateRedirectors | REN_NonTransactional | REN_ForceNoResetLoaders))
 			{
 				OldPkg->ClearFlags(RF_Standalone | RF_Public);

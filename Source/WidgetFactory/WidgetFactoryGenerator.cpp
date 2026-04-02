@@ -60,6 +60,71 @@ DEFINE_LOG_CATEGORY_STATIC(LogWidgetFactory, Log, All);
 
 FString UWidgetFactoryGenerator::CustomTemplateDir;
 
+namespace
+{
+FString ResolveWidgetTemplatePath(const FString& JsonFileNameOrPath)
+{
+	FString Candidate = JsonFileNameOrPath;
+	Candidate.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+	if (Candidate.IsEmpty())
+	{
+		return FString();
+	}
+
+	auto TryResolve = [](const FString& Path) -> FString
+	{
+		if (Path.IsEmpty())
+		{
+			return FString();
+		}
+		if (FPaths::FileExists(Path))
+		{
+			return Path;
+		}
+		if (FPaths::IsRelative(Path))
+		{
+			const FString ProjectRelative = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / Path);
+			if (FPaths::FileExists(ProjectRelative))
+			{
+				return ProjectRelative;
+			}
+		}
+		return FString();
+	};
+
+	FString Direct = TryResolve(Candidate);
+	if (!Direct.IsEmpty())
+	{
+		return Direct;
+	}
+
+	FString WithExt = Candidate.EndsWith(TEXT(".json")) ? Candidate : Candidate + TEXT(".json");
+	Direct = TryResolve(WithExt);
+	if (!Direct.IsEmpty())
+	{
+		return Direct;
+	}
+
+	const FString TemplateDir = UWidgetFactoryGenerator::GetTemplateDirectory();
+	const FString FileName = FPaths::GetCleanFilename(WithExt);
+
+	FString TemplateFile = TryResolve(TemplateDir / FileName);
+	if (!TemplateFile.IsEmpty())
+	{
+		return TemplateFile;
+	}
+
+	TemplateFile = TryResolve(TemplateDir / WithExt);
+	if (!TemplateFile.IsEmpty())
+	{
+		return TemplateFile;
+	}
+
+	return TemplateDir / FileName;
+}
+}
+
 // ─── Widget class registry ──────────────────────────────────────────────────
 
 static TMap<FString, UClass*> GWidgetClassMap;
@@ -584,7 +649,7 @@ UWidget* UWidgetFactoryGenerator::CreateWidgetFromJson(
 	if (!NewWidget) { UE_LOG(LogWidgetFactory, Error, TEXT("创建控件失败: %s"), *TypeName); return nullptr; }
 
 	// Properties
-	const TSharedPtr<FJsonObject>* PropsJson;
+	const TSharedPtr<FJsonObject>* PropsJson = nullptr;
 	if (Json->TryGetObjectField(TEXT("Properties"), PropsJson))
 		SetWidgetProperties(NewWidget, *PropsJson);
 
@@ -592,7 +657,7 @@ UWidget* UWidgetFactoryGenerator::CreateWidgetFromJson(
 	if (Parent)
 	{
 		Parent->AddChild(NewWidget);
-		const TSharedPtr<FJsonObject>* SlotJson;
+		const TSharedPtr<FJsonObject>* SlotJson = nullptr;
 		if (Json->TryGetObjectField(TEXT("Slot"), SlotJson))
 			SetSlotProperties(NewWidget, *SlotJson);
 		else if (PropsJson && PropsJson->IsValid())
@@ -1180,7 +1245,7 @@ UWidgetBlueprint* UWidgetFactoryGenerator::GenerateFromJson(const FString& JsonF
 	UE_LOG(LogWidgetFactory, Log, TEXT("开始生成: %s"), *JsonFileName);
 	UE_LOG(LogWidgetFactory, Log, TEXT("════════════════════════════════════════"));
 
-	FString JsonPath = GetTemplateDirectory() / (JsonFileName + TEXT(".json"));
+	FString JsonPath = ResolveWidgetTemplatePath(JsonFileName);
 	TSharedPtr<FJsonObject> Config = LoadJsonConfig(JsonPath);
 	if (!Config.IsValid()) return nullptr;
 

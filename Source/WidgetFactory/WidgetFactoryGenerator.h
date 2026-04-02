@@ -33,7 +33,7 @@ class WIDGETFACTORY_API UWidgetFactoryGenerator : public UObject
 public:
 	/**
 	 * 从 JSON 模板生成 Widget Blueprint
-	 * @param JsonFileName  模板名（不含路径和扩展名）
+	 * @param JsonFileName  模板名（不含路径和扩展名），或显式 JSON 路径
 	 * @param PackagePath   输出路径，默认 /Game/UI
 	 * @return 生成的 Widget Blueprint，失败返回 nullptr
 	 */

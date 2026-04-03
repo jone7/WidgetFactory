@@ -48,6 +48,7 @@
 #include "Interfaces/IPluginManager.h"
 #include "Internationalization/Regex.h"
 #include "Subsystems/AssetEditorSubsystem.h"
+#include "Subsystems/EditorAssetSubsystem.h"
 #include "Framework/Application/SlateApplication.h"
 #include "UObject/LinkerLoad.h"
 #include "Editor.h"
@@ -222,8 +223,12 @@ TSharedPtr<FJsonObject> UWidgetFactoryGenerator::LoadJsonConfig(const FString& J
 	return Json;
 }
 
-bool UWidgetFactoryGenerator::PrepareExistingAssetForOverwrite(const FString& FullPath, const FString& WidgetName)
+bool UWidgetFactoryGenerator::PrepareExistingAssetForOverwrite(const FString& FullPath, const FString& WidgetName, bool* bOutHadOpenEditor)
 {
+	if (bOutHadOpenEditor)
+	{
+		*bOutHadOpenEditor = false;
+	}
 	if (!GEditor)
 	{
 		return true;
@@ -257,6 +262,11 @@ bool UWidgetFactoryGenerator::PrepareExistingAssetForOverwrite(const FString& Fu
 		}
 	}
 
+	if (AssetsToCheck.Num() == 0)
+	{
+		return true;
+	}
+
 	bool bHasOpenEditor = false;
 	for (UObject* Asset : AssetsToCheck)
 	{
@@ -267,14 +277,23 @@ bool UWidgetFactoryGenerator::PrepareExistingAssetForOverwrite(const FString& Fu
 		}
 	}
 
-	if (!bHasOpenEditor)
+	if (bOutHadOpenEditor)
 	{
-		return true;
+		*bOutHadOpenEditor = bHasOpenEditor;
 	}
 
-	UE_LOG(LogWidgetFactory, Warning,
-		TEXT("目标 UI 当前正处于打开状态，自动关闭后继续覆盖生成: %s"),
-		*FullPath);
+	if (bHasOpenEditor)
+	{
+		UE_LOG(LogWidgetFactory, Warning,
+			TEXT("目标 UI 当前正处于打开状态，自动关闭后继续覆盖生成: %s"),
+			*FullPath);
+	}
+	else
+	{
+		UE_LOG(LogWidgetFactory, Log,
+			TEXT("目标 UI 已存在，执行覆盖前清理: %s"),
+			*FullPath);
+	}
 
 	for (UObject* Asset : AssetsToCheck)
 	{
@@ -284,12 +303,26 @@ bool UWidgetFactoryGenerator::PrepareExistingAssetForOverwrite(const FString& Fu
 		}
 	}
 
+	FlushAsyncLoading();
+
 	if (FSlateApplication::IsInitialized())
 	{
 		FSlateApplication::Get().Tick(ESlateTickType::Time);
 	}
 
-	CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
+	// 已打开资产在关闭资源页后，继续沿用后面的旧覆盖路径即可。
+	// 这里如果抢先 GC，UE 的 TypedElement/编辑器状态偶发会在随后访问旧引用而崩溃。
+	// 未打开资产则仍然需要做一次更重的清理，避免 REINST/重命名冲突。
+	if (!bHasOpenEditor)
+	{
+		CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
+		FlushAsyncLoading();
+
+		if (FSlateApplication::IsInitialized())
+		{
+			FSlateApplication::Get().Tick(ESlateTickType::Time);
+		}
+	}
 
 	for (UObject* Asset : AssetsToCheck)
 	{
@@ -303,6 +336,50 @@ bool UWidgetFactoryGenerator::PrepareExistingAssetForOverwrite(const FString& Fu
 	}
 
 	return true;
+}
+
+bool UWidgetFactoryGenerator::ResetWidgetBlueprintForReuse(UWidgetBlueprint* WidgetBlueprint)
+{
+	if (!WidgetBlueprint)
+	{
+		return false;
+	}
+
+	WidgetBlueprint->Modify();
+
+	if (WidgetBlueprint->WidgetTree)
+	{
+		TArray<UWidget*> OldWidgets;
+		WidgetBlueprint->WidgetTree->GetAllWidgets(OldWidgets);
+		for (UWidget* OldWidget : OldWidgets)
+		{
+			if (!OldWidget)
+			{
+				continue;
+			}
+
+			OldWidget->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional | REN_ForceNoResetLoaders);
+			OldWidget->ClearFlags(RF_Standalone | RF_Public);
+			OldWidget->SetFlags(RF_Transient);
+			OldWidget->MarkAsGarbage();
+		}
+
+		UWidgetTree* OldTree = WidgetBlueprint->WidgetTree;
+		WidgetBlueprint->WidgetTree = nullptr;
+		OldTree->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional | REN_ForceNoResetLoaders);
+		OldTree->ClearFlags(RF_Standalone | RF_Public);
+		OldTree->SetFlags(RF_Transient);
+		OldTree->MarkAsGarbage();
+	}
+
+#if WITH_EDITORONLY_DATA
+	WidgetBlueprint->Bindings.Empty();
+	WidgetBlueprint->Animations.Empty();
+	WidgetBlueprint->WidgetVariableNameToGuidMap.Empty();
+#endif
+
+	WidgetBlueprint->WidgetTree = NewObject<UWidgetTree>(WidgetBlueprint, TEXT("WidgetTree"), RF_Transactional);
+	return WidgetBlueprint->WidgetTree != nullptr;
 }
 
 
@@ -322,100 +399,47 @@ UWidgetBlueprint* UWidgetFactoryGenerator::CreateWidgetBlueprint(const FString& 
 			return nullptr;
 		}
 
-		// 1. 关闭该资产的编辑器 Tab（防止编辑器持有引用导致 GC 悬空指针）
-		UPackage* OldPkg = FindPackage(nullptr, *FullPath);
-		if (OldPkg)
+		UEditorAssetSubsystem* EditorAssetSubsystem = GEditor ? GEditor->GetEditorSubsystem<UEditorAssetSubsystem>() : nullptr;
+		if (!EditorAssetSubsystem)
 		{
-			TArray<UObject*> AssetsInPkg;
-			ForEachObjectWithPackage(OldPkg, [&AssetsInPkg](UObject* Obj) { AssetsInPkg.Add(Obj); return true; }, false);
+			UE_LOG(LogWidgetFactory, Error, TEXT("无法获取 EditorAssetSubsystem，无法安全删除旧资源: %s"), *FullPath);
+			return nullptr;
+		}
 
-			// 关闭所有引用该资产的编辑器
-			for (UObject* Obj : AssetsInPkg)
+		if (EditorAssetSubsystem->DoesAssetExist(FullPath))
+		{
+			UE_LOG(LogWidgetFactory, Log, TEXT("删除旧资源后重建: %s"), *FullPath);
+			if (!EditorAssetSubsystem->DeleteAsset(FullPath))
 			{
-				if (Obj && Obj->IsAsset())
-				{
-					GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->CloseAllEditorsForAsset(Obj);
-				}
+				UE_LOG(LogWidgetFactory, Error, TEXT("删除旧资源失败，已中止生成: %s"), *FullPath);
+				return nullptr;
 			}
 
-			// 2. 将旧 Package 重命名到临时路径（避免同名冲突），清除引用
-			FString TrashName = FString::Printf(TEXT("/Temp/WidgetFactory_Trash_%s_%d"), *WidgetName, FMath::Rand());
-
-			// 2a. 先清理 Blueprint 的 GeneratedClass/CDO（防止 GC 悬空指针）
-			for (UObject* Obj : AssetsInPkg)
+			FlushAsyncLoading();
+			if (FSlateApplication::IsInitialized())
 			{
-				UBlueprint* AsBP = Cast<UBlueprint>(Obj);
-				if (AsBP)
-				{
-					if (AsBP->GeneratedClass)
-					{
-						UClass* OldClass = AsBP->GeneratedClass;
-						UObject* OldCDO = OldClass->GetDefaultObject(false);
-						if (OldCDO)
-						{
-							OldCDO->ClearFlags(RF_Standalone | RF_Public);
-							OldCDO->SetFlags(RF_Transient);
-							OldCDO->MarkAsGarbage();
-						}
-						OldClass->ClearFlags(RF_Standalone | RF_Public);
-						OldClass->SetFlags(RF_Transient);
-						OldClass->MarkAsGarbage();
-						AsBP->GeneratedClass = nullptr;
-					}
-					if (AsBP->SkeletonGeneratedClass)
-					{
-						UClass* OldSkel = AsBP->SkeletonGeneratedClass;
-						UObject* OldSkelCDO = OldSkel->GetDefaultObject(false);
-						if (OldSkelCDO)
-						{
-							OldSkelCDO->ClearFlags(RF_Standalone | RF_Public);
-							OldSkelCDO->SetFlags(RF_Transient);
-							OldSkelCDO->MarkAsGarbage();
-						}
-						OldSkel->ClearFlags(RF_Standalone | RF_Public);
-						OldSkel->SetFlags(RF_Transient);
-						OldSkel->MarkAsGarbage();
-						AsBP->SkeletonGeneratedClass = nullptr;
-					}
-				}
-			}
-
-			if (OldPkg->Rename(*TrashName, nullptr, REN_DontCreateRedirectors | REN_NonTransactional | REN_ForceNoResetLoaders))
-			{
-				OldPkg->ClearFlags(RF_Standalone | RF_Public);
-				OldPkg->SetFlags(RF_Transient);
-				for (UObject* Obj : AssetsInPkg)
-				{
-					if (Obj)
-					{
-						Obj->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional | REN_ForceNoResetLoaders);
-						Obj->ClearFlags(RF_Standalone | RF_Public);
-						Obj->SetFlags(RF_Transient);
-						Obj->MarkAsGarbage();
-					}
-				}
-				OldPkg->MarkAsGarbage();
-			}
-			else
-			{
-				// Rename 失败，回退到旧方式
-				UE_LOG(LogWidgetFactory, Warning, TEXT("Rename 旧 Package 失败，尝试直接清理"));
-				for (UObject* Obj : AssetsInPkg)
-				{
-					if (Obj) { Obj->ClearFlags(RF_Standalone | RF_Public); Obj->SetFlags(RF_Transient); Obj->MarkAsGarbage(); }
-				}
-				OldPkg->ClearFlags(RF_Standalone);
-				OldPkg->SetFlags(RF_Transient);
-				OldPkg->MarkAsGarbage();
+				FSlateApplication::Get().Tick(ESlateTickType::Time);
 			}
 
 			CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
 
-			// 3. 释放文件句柄
-			ResetLoaders(OldPkg);
+			FlushAsyncLoading();
+			if (FSlateApplication::IsInitialized())
+			{
+				FSlateApplication::Get().Tick(ESlateTickType::Time);
+			}
+
+			if (EditorAssetSubsystem->DoesAssetExist(FullPath))
+			{
+				UE_LOG(LogWidgetFactory, Error, TEXT("旧资源删除后仍然存在，已中止生成: %s"), *FullPath);
+				return nullptr;
+			}
 		}
 
-		IFileManager::Get().Delete(*AssetFile, false, true);
+		if (FPlatformFileManager::Get().GetPlatformFile().FileExists(*AssetFile))
+		{
+			IFileManager::Get().Delete(*AssetFile, false, true);
+		}
 	}
 
 	UPackage* Package = CreatePackage(*FullPath);

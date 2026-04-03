@@ -72,6 +72,7 @@ private:
 
 	static TSharedPtr<FJsonObject> LoadJsonConfig(const FString& JsonPath);
 	static UWidgetBlueprint* CreateWidgetBlueprint(const FString& PackagePath, const FString& WidgetName);
+	static bool PrepareExistingAssetForOverwrite(const FString& FullPath, const FString& WidgetName);
 	static UWidget* CreateWidgetFromJson(UWidgetTree* WidgetTree, const TSharedPtr<FJsonObject>& WidgetJson, UPanelWidget* Parent);
 	static void SetWidgetProperties(UWidget* Widget, const TSharedPtr<FJsonObject>& PropertiesJson);
 	static void SetSlotProperties(UWidget* Widget, const TSharedPtr<FJsonObject>& SlotJson);

@@ -12,6 +12,7 @@
 #include "Components/ScrollBox.h"
 #include "Components/ScrollBoxSlot.h"
 #include "Components/Button.h"
+#include "Components/ButtonSlot.h"
 #include "Components/TextBlock.h"
 #include "Components/Image.h"
 #include "Components/Spacer.h"
@@ -47,6 +48,7 @@
 #include "Interfaces/IPluginManager.h"
 #include "Internationalization/Regex.h"
 #include "Subsystems/AssetEditorSubsystem.h"
+#include "Framework/Application/SlateApplication.h"
 #include "UObject/LinkerLoad.h"
 #include "Editor.h"
 
@@ -220,6 +222,89 @@ TSharedPtr<FJsonObject> UWidgetFactoryGenerator::LoadJsonConfig(const FString& J
 	return Json;
 }
 
+bool UWidgetFactoryGenerator::PrepareExistingAssetForOverwrite(const FString& FullPath, const FString& WidgetName)
+{
+	if (!GEditor)
+	{
+		return true;
+	}
+
+	UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+	if (!AssetEditorSubsystem)
+	{
+		return true;
+	}
+
+	TArray<UObject*> AssetsToCheck;
+	if (UPackage* ExistingPkg = FindPackage(nullptr, *FullPath))
+	{
+		ForEachObjectWithPackage(ExistingPkg, [&AssetsToCheck](UObject* Obj)
+		{
+			if (Obj && Obj->IsAsset())
+			{
+				AssetsToCheck.Add(Obj);
+			}
+			return true;
+		}, false);
+	}
+
+	if (AssetsToCheck.Num() == 0)
+	{
+		const FString ObjectPath = FString::Printf(TEXT("%s.%s"), *FullPath, *WidgetName);
+		if (UObject* ExistingAsset = LoadObject<UObject>(nullptr, *ObjectPath))
+		{
+			AssetsToCheck.Add(ExistingAsset);
+		}
+	}
+
+	bool bHasOpenEditor = false;
+	for (UObject* Asset : AssetsToCheck)
+	{
+		if (Asset && AssetEditorSubsystem->FindEditorsForAsset(Asset).Num() > 0)
+		{
+			bHasOpenEditor = true;
+			break;
+		}
+	}
+
+	if (!bHasOpenEditor)
+	{
+		return true;
+	}
+
+	UE_LOG(LogWidgetFactory, Warning,
+		TEXT("目标 UI 当前正处于打开状态，自动关闭后继续覆盖生成: %s"),
+		*FullPath);
+
+	for (UObject* Asset : AssetsToCheck)
+	{
+		if (Asset)
+		{
+			AssetEditorSubsystem->CloseAllEditorsForAsset(Asset);
+		}
+	}
+
+	if (FSlateApplication::IsInitialized())
+	{
+		FSlateApplication::Get().Tick(ESlateTickType::Time);
+	}
+
+	CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
+
+	for (UObject* Asset : AssetsToCheck)
+	{
+		if (Asset && AssetEditorSubsystem->FindEditorsForAsset(Asset).Num() > 0)
+		{
+			UE_LOG(LogWidgetFactory, Error,
+				TEXT("自动关闭目标 UI 编辑器失败，已中止覆盖生成。请手动关闭资源页后重试: %s"),
+				*Asset->GetPathName());
+			return false;
+		}
+	}
+
+	return true;
+}
+
 
 // ─── Blueprint creation ─────────────────────────────────────────────────────
 
@@ -231,6 +316,11 @@ UWidgetBlueprint* UWidgetFactoryGenerator::CreateWidgetBlueprint(const FString& 
 	if (FPlatformFileManager::Get().GetPlatformFile().FileExists(*AssetFile))
 	{
 		UE_LOG(LogWidgetFactory, Warning, TEXT("覆盖已有资源: %s"), *FullPath);
+
+		if (!PrepareExistingAssetForOverwrite(FullPath, WidgetName))
+		{
+			return nullptr;
+		}
 
 		// 1. 关闭该资产的编辑器 Tab（防止编辑器持有引用导致 GC 悬空指针）
 		UPackage* OldPkg = FindPackage(nullptr, *FullPath);
@@ -432,6 +522,38 @@ void UWidgetFactoryGenerator::SetWidgetProperties(UWidget* Widget, const TShared
 		}
 	}
 
+	// Button
+	if (UButton* Btn = Cast<UButton>(Widget))
+	{
+		const TSharedPtr<FJsonObject>* BgColorObj;
+		if (Props->TryGetObjectField(TEXT("BackgroundColor"), BgColorObj))
+		{
+			Btn->SetBackgroundColor(ParseColor(*BgColorObj));
+		}
+
+		const TSharedPtr<FJsonObject>* ColorObj;
+		if (Props->TryGetObjectField(TEXT("ColorAndOpacity"), ColorObj))
+		{
+			Btn->SetColorAndOpacity(ParseColor(*ColorObj));
+		}
+	}
+
+	// Button
+	if (UButton* Btn = Cast<UButton>(Widget))
+	{
+		const TSharedPtr<FJsonObject>* BgColorObj;
+		if (Props->TryGetObjectField(TEXT("BackgroundColor"), BgColorObj))
+		{
+			Btn->SetBackgroundColor(ParseColor(*BgColorObj));
+		}
+
+		const TSharedPtr<FJsonObject>* ColorObj;
+		if (Props->TryGetObjectField(TEXT("ColorAndOpacity"), ColorObj))
+		{
+			Btn->SetColorAndOpacity(ParseColor(*ColorObj));
+		}
+	}
+
 	// Spacer
 	if (USpacer* Sp = Cast<USpacer>(Widget))
 	{
@@ -593,6 +715,36 @@ void UWidgetFactoryGenerator::SetSlotProperties(UWidget* Widget, const TSharedPt
 		FString HA; if (Slot->TryGetStringField(TEXT("HAlign"), HA)) SS->SetHorizontalAlignment(ParseHAlign(HA));
 		const TSharedPtr<FJsonObject>* Pad;
 		if (Slot->TryGetObjectField(TEXT("Padding"), Pad)) SS->SetPadding(ParseMargin(*Pad));
+		return;
+	}
+
+	// ButtonSlot
+	if (UButtonSlot* BS = Cast<UButtonSlot>(Widget->Slot))
+	{
+		FString HA; if (Slot->TryGetStringField(TEXT("HAlign"), HA)) BS->SetHorizontalAlignment(ParseHAlign(HA));
+		FString VA; if (Slot->TryGetStringField(TEXT("VAlign"), VA)) BS->SetVerticalAlignment(ParseVAlign(VA));
+		const TSharedPtr<FJsonObject>* Pad;
+		if (Slot->TryGetObjectField(TEXT("Padding"), Pad)) BS->SetPadding(ParseMargin(*Pad));
+		return;
+	}
+
+	// ButtonSlot
+	if (UButtonSlot* BS = Cast<UButtonSlot>(Widget->Slot))
+	{
+		FString HA; if (Slot->TryGetStringField(TEXT("HAlign"), HA)) BS->SetHorizontalAlignment(ParseHAlign(HA));
+		FString VA; if (Slot->TryGetStringField(TEXT("VAlign"), VA)) BS->SetVerticalAlignment(ParseVAlign(VA));
+		const TSharedPtr<FJsonObject>* Pad;
+		if (Slot->TryGetObjectField(TEXT("Padding"), Pad)) BS->SetPadding(ParseMargin(*Pad));
+		return;
+	}
+
+	// ButtonSlot
+	if (UButtonSlot* BS = Cast<UButtonSlot>(Widget->Slot))
+	{
+		FString HA; if (Slot->TryGetStringField(TEXT("HAlign"), HA)) BS->SetHorizontalAlignment(ParseHAlign(HA));
+		FString VA; if (Slot->TryGetStringField(TEXT("VAlign"), VA)) BS->SetVerticalAlignment(ParseVAlign(VA));
+		const TSharedPtr<FJsonObject>* Pad;
+		if (Slot->TryGetObjectField(TEXT("Padding"), Pad)) BS->SetPadding(ParseMargin(*Pad));
 		return;
 	}
 
@@ -881,6 +1033,42 @@ TSharedPtr<FJsonObject> UWidgetFactoryGenerator::ExportPropertiesToJson(UWidget*
 		if (Img->GetBrush().GetResourceObject())
 		{
 			Props->SetStringField(TEXT("Brush"), Img->GetBrush().GetResourceObject()->GetPathName());
+			bHasProps = true;
+		}
+	}
+
+	// Button
+	if (UButton* Btn = Cast<UButton>(Widget))
+	{
+		FLinearColor BgColor = Btn->GetBackgroundColor();
+		if (BgColor != FLinearColor::White)
+		{
+			Props->SetObjectField(TEXT("BackgroundColor"), ColorToJson(BgColor));
+			bHasProps = true;
+		}
+
+		FLinearColor Color = Btn->GetColorAndOpacity();
+		if (Color != FLinearColor::White)
+		{
+			Props->SetObjectField(TEXT("ColorAndOpacity"), ColorToJson(Color));
+			bHasProps = true;
+		}
+	}
+
+	// Button
+	if (UButton* Btn = Cast<UButton>(Widget))
+	{
+		FLinearColor BgColor = Btn->GetBackgroundColor();
+		if (BgColor != FLinearColor::White)
+		{
+			Props->SetObjectField(TEXT("BackgroundColor"), ColorToJson(BgColor));
+			bHasProps = true;
+		}
+
+		FLinearColor Color = Btn->GetColorAndOpacity();
+		if (Color != FLinearColor::White)
+		{
+			Props->SetObjectField(TEXT("ColorAndOpacity"), ColorToJson(Color));
 			bHasProps = true;
 		}
 	}

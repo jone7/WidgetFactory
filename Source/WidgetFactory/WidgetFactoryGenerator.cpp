@@ -34,10 +34,13 @@
 #include "Components/WidgetSwitcher.h"
 #include "Components/Throbber.h"
 #include "Components/CircularThrobber.h"
+#include "Engine/Texture2D.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Styling/SlateBrush.h"
+#include "Styling/SlateTypes.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "UObject/SavePackage.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -125,6 +128,30 @@ FString ResolveWidgetTemplatePath(const FString& JsonFileNameOrPath)
 	}
 
 	return TemplateDir / FileName;
+}
+
+FString NormalizeObjectLoadPath(const FString& AssetPath)
+{
+	FString LoadPath = AssetPath;
+	LoadPath.TrimStartAndEndInline();
+
+	if (LoadPath.StartsWith(TEXT("/Game/")) && !LoadPath.Contains(TEXT(".")))
+	{
+		const FString AssetName = FPaths::GetBaseFilename(LoadPath);
+		if (!AssetName.IsEmpty())
+		{
+			LoadPath = FString::Printf(TEXT("%s.%s"), *LoadPath, *AssetName);
+		}
+	}
+
+	return LoadPath;
+}
+
+template <typename TObject>
+TObject* LoadAssetObject(const FString& AssetPath)
+{
+	const FString LoadPath = NormalizeObjectLoadPath(AssetPath);
+	return LoadPath.IsEmpty() ? nullptr : LoadObject<TObject>(nullptr, *LoadPath);
 }
 }
 
@@ -474,6 +501,255 @@ static FMargin ParseMargin(const TSharedPtr<FJsonObject>& Obj)
 		Obj->GetNumberField(TEXT("Bottom")));
 }
 
+static TSharedPtr<FJsonObject> MakeColorJson(const FLinearColor& Color)
+{
+	TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+	Json->SetNumberField(TEXT("R"), FMath::RoundToFloat(Color.R * 1000) / 1000);
+	Json->SetNumberField(TEXT("G"), FMath::RoundToFloat(Color.G * 1000) / 1000);
+	Json->SetNumberField(TEXT("B"), FMath::RoundToFloat(Color.B * 1000) / 1000);
+	Json->SetNumberField(TEXT("A"), FMath::RoundToFloat(Color.A * 1000) / 1000);
+	return Json;
+}
+
+static TSharedPtr<FJsonObject> MakeMarginJson(const FMargin& Margin)
+{
+	TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+	Json->SetNumberField(TEXT("Left"), Margin.Left);
+	Json->SetNumberField(TEXT("Top"), Margin.Top);
+	Json->SetNumberField(TEXT("Right"), Margin.Right);
+	Json->SetNumberField(TEXT("Bottom"), Margin.Bottom);
+	return Json;
+}
+
+static FVector2D ParseSlateVector2D(const TSharedPtr<FJsonObject>& Obj)
+{
+	double Width = 0.0;
+	double Height = 0.0;
+
+	if (Obj->HasField(TEXT("Width"))) Width = Obj->GetNumberField(TEXT("Width"));
+	else if (Obj->HasField(TEXT("X"))) Width = Obj->GetNumberField(TEXT("X"));
+
+	if (Obj->HasField(TEXT("Height"))) Height = Obj->GetNumberField(TEXT("Height"));
+	else if (Obj->HasField(TEXT("Y"))) Height = Obj->GetNumberField(TEXT("Y"));
+
+	return FVector2D(Width, Height);
+}
+
+static FString BrushDrawTypeToString(ESlateBrushDrawType::Type DrawAs)
+{
+	switch (DrawAs)
+	{
+	case ESlateBrushDrawType::Box: return TEXT("Box");
+	case ESlateBrushDrawType::Border: return TEXT("Border");
+	case ESlateBrushDrawType::RoundedBox: return TEXT("RoundedBox");
+	case ESlateBrushDrawType::Image:
+	default:
+		return TEXT("Image");
+	}
+}
+
+static ESlateBrushDrawType::Type ParseBrushDrawType(const FString& DrawAs)
+{
+	if (DrawAs == TEXT("Box")) return ESlateBrushDrawType::Box;
+	if (DrawAs == TEXT("Border")) return ESlateBrushDrawType::Border;
+	if (DrawAs == TEXT("RoundedBox")) return ESlateBrushDrawType::RoundedBox;
+	return ESlateBrushDrawType::Image;
+}
+
+static bool ApplySlateBrushFromJson(FSlateBrush& Brush, const TSharedPtr<FJsonObject>& BrushJson)
+{
+	if (!BrushJson.IsValid())
+	{
+		return false;
+	}
+
+	bool bApplied = false;
+	UTexture2D* Texture = nullptr;
+
+	FString TexturePath;
+	if (BrushJson->TryGetStringField(TEXT("Texture"), TexturePath) || BrushJson->TryGetStringField(TEXT("Brush"), TexturePath))
+	{
+		Texture = LoadAssetObject<UTexture2D>(TexturePath);
+		if (Texture)
+		{
+			Brush.SetResourceObject(Texture);
+			Brush.SetImageSize(FVector2D(Texture->GetSizeX(), Texture->GetSizeY()));
+			Brush.DrawAs = ESlateBrushDrawType::Image;
+			bApplied = true;
+		}
+	}
+
+	const TSharedPtr<FJsonObject>* TintColorObj = nullptr;
+	if (BrushJson->TryGetObjectField(TEXT("TintColor"), TintColorObj) || BrushJson->TryGetObjectField(TEXT("Color"), TintColorObj))
+	{
+		Brush.TintColor = FSlateColor(ParseColor(*TintColorObj));
+		bApplied = true;
+	}
+
+	const TSharedPtr<FJsonObject>* MarginObj = nullptr;
+	if (BrushJson->TryGetObjectField(TEXT("Margin"), MarginObj))
+	{
+		Brush.Margin = ParseMargin(*MarginObj);
+		bApplied = true;
+	}
+
+	const TSharedPtr<FJsonObject>* ImageSizeObj = nullptr;
+	if (BrushJson->TryGetObjectField(TEXT("ImageSize"), ImageSizeObj))
+	{
+		Brush.SetImageSize(ParseSlateVector2D(*ImageSizeObj));
+		bApplied = true;
+	}
+
+	FString DrawAs;
+	if (BrushJson->TryGetStringField(TEXT("DrawAs"), DrawAs))
+	{
+		Brush.DrawAs = ParseBrushDrawType(DrawAs);
+		bApplied = true;
+	}
+
+	return bApplied;
+}
+
+static bool ApplyButtonStyleFromJson(UButton* Button, const TSharedPtr<FJsonObject>& StyleJson)
+{
+	if (!Button || !StyleJson.IsValid())
+	{
+		return false;
+	}
+
+	FButtonStyle Style = Button->GetStyle();
+	bool bApplied = false;
+
+	const TSharedPtr<FJsonObject>* BrushJson = nullptr;
+	if (StyleJson->TryGetObjectField(TEXT("Normal"), BrushJson))
+	{
+		bApplied |= ApplySlateBrushFromJson(Style.Normal, *BrushJson);
+	}
+	if (StyleJson->TryGetObjectField(TEXT("Hovered"), BrushJson))
+	{
+		bApplied |= ApplySlateBrushFromJson(Style.Hovered, *BrushJson);
+	}
+	if (StyleJson->TryGetObjectField(TEXT("Pressed"), BrushJson))
+	{
+		bApplied |= ApplySlateBrushFromJson(Style.Pressed, *BrushJson);
+	}
+	if (StyleJson->TryGetObjectField(TEXT("Disabled"), BrushJson))
+	{
+		bApplied |= ApplySlateBrushFromJson(Style.Disabled, *BrushJson);
+	}
+
+	const TSharedPtr<FJsonObject>* PaddingJson = nullptr;
+	if (StyleJson->TryGetObjectField(TEXT("NormalPadding"), PaddingJson))
+	{
+		Style.NormalPadding = ParseMargin(*PaddingJson);
+		bApplied = true;
+	}
+	if (StyleJson->TryGetObjectField(TEXT("PressedPadding"), PaddingJson))
+	{
+		Style.PressedPadding = ParseMargin(*PaddingJson);
+		bApplied = true;
+	}
+
+	if (bApplied)
+	{
+		Button->SetStyle(Style);
+	}
+
+	return bApplied;
+}
+
+static bool BrushHasMeaningfulData(const FSlateBrush& Brush)
+{
+	const FLinearColor Tint = Brush.TintColor.GetSpecifiedColor();
+	const FVector2D ImageSize = Brush.GetImageSize();
+	return Brush.GetResourceObject() != nullptr
+		|| !Brush.Margin.IsNearlyZero()
+		|| !ImageSize.IsZero()
+		|| Tint != FLinearColor::White
+		|| Brush.DrawAs != ESlateBrushDrawType::Image;
+}
+
+static TSharedPtr<FJsonObject> BrushToJson(const FSlateBrush& Brush)
+{
+	if (!BrushHasMeaningfulData(Brush))
+	{
+		return nullptr;
+	}
+
+	TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+	bool bHasData = false;
+
+	if (UObject* ResourceObject = Brush.GetResourceObject())
+	{
+		Json->SetStringField(TEXT("Texture"), ResourceObject->GetPathName());
+		bHasData = true;
+	}
+
+	const FLinearColor Tint = Brush.TintColor.GetSpecifiedColor();
+	if (Tint != FLinearColor::White)
+	{
+		Json->SetObjectField(TEXT("TintColor"), MakeColorJson(Tint));
+		bHasData = true;
+	}
+
+	if (!Brush.Margin.IsNearlyZero())
+	{
+		Json->SetObjectField(TEXT("Margin"), MakeMarginJson(Brush.Margin));
+		bHasData = true;
+	}
+
+	const FVector2D ImageSize = Brush.GetImageSize();
+	if (!ImageSize.IsZero())
+	{
+		TSharedPtr<FJsonObject> SizeJson = MakeShared<FJsonObject>();
+		SizeJson->SetNumberField(TEXT("Width"), ImageSize.X);
+		SizeJson->SetNumberField(TEXT("Height"), ImageSize.Y);
+		Json->SetObjectField(TEXT("ImageSize"), SizeJson);
+		bHasData = true;
+	}
+
+	if (Brush.DrawAs != ESlateBrushDrawType::Image)
+	{
+		Json->SetStringField(TEXT("DrawAs"), BrushDrawTypeToString(Brush.DrawAs));
+		bHasData = true;
+	}
+
+	return bHasData ? Json : nullptr;
+}
+
+static TSharedPtr<FJsonObject> ButtonStyleToJson(const FButtonStyle& Style)
+{
+	TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+	bool bHasData = false;
+
+	auto AddBrushField = [&](const TCHAR* FieldName, const FSlateBrush& Brush)
+	{
+		if (TSharedPtr<FJsonObject> BrushJson = BrushToJson(Brush))
+		{
+			Json->SetObjectField(FieldName, BrushJson);
+			bHasData = true;
+		}
+	};
+
+	AddBrushField(TEXT("Normal"), Style.Normal);
+	AddBrushField(TEXT("Hovered"), Style.Hovered);
+	AddBrushField(TEXT("Pressed"), Style.Pressed);
+	AddBrushField(TEXT("Disabled"), Style.Disabled);
+
+	if (!Style.NormalPadding.IsNearlyZero())
+	{
+		Json->SetObjectField(TEXT("NormalPadding"), MakeMarginJson(Style.NormalPadding));
+		bHasData = true;
+	}
+	if (!Style.PressedPadding.IsNearlyZero())
+	{
+		Json->SetObjectField(TEXT("PressedPadding"), MakeMarginJson(Style.PressedPadding));
+		bHasData = true;
+	}
+
+	return bHasData ? Json : nullptr;
+}
+
 void UWidgetFactoryGenerator::SetWidgetProperties(UWidget* Widget, const TSharedPtr<FJsonObject>& Props)
 {
 	if (!Widget || !Props.IsValid()) return;
@@ -509,7 +785,7 @@ void UWidgetFactoryGenerator::SetWidgetProperties(UWidget* Widget, const TShared
 		if (Props->TryGetStringField(TEXT("FontFamily"), FontFamily))
 		{
 			FSlateFontInfo Font = TB->GetFont();
-			UObject* FontObj = LoadObject<UObject>(nullptr, *FontFamily);
+			UObject* FontObj = LoadAssetObject<UObject>(FontFamily);
 			if (FontObj) Font.FontObject = FontObj;
 			TB->SetFont(Font);
 		}
@@ -541,7 +817,7 @@ void UWidgetFactoryGenerator::SetWidgetProperties(UWidget* Widget, const TShared
 		FString BrushPath;
 		if (Props->TryGetStringField(TEXT("Brush"), BrushPath))
 		{
-			UTexture2D* Tex = LoadObject<UTexture2D>(nullptr, *BrushPath);
+			UTexture2D* Tex = LoadAssetObject<UTexture2D>(BrushPath);
 			if (Tex) Img->SetBrushFromTexture(Tex);
 		}
 	}
@@ -549,22 +825,12 @@ void UWidgetFactoryGenerator::SetWidgetProperties(UWidget* Widget, const TShared
 	// Button
 	if (UButton* Btn = Cast<UButton>(Widget))
 	{
-		const TSharedPtr<FJsonObject>* BgColorObj;
-		if (Props->TryGetObjectField(TEXT("BackgroundColor"), BgColorObj))
+		const TSharedPtr<FJsonObject>* StyleObj;
+		if (Props->TryGetObjectField(TEXT("ButtonStyle"), StyleObj))
 		{
-			Btn->SetBackgroundColor(ParseColor(*BgColorObj));
+			ApplyButtonStyleFromJson(Btn, *StyleObj);
 		}
 
-		const TSharedPtr<FJsonObject>* ColorObj;
-		if (Props->TryGetObjectField(TEXT("ColorAndOpacity"), ColorObj))
-		{
-			Btn->SetColorAndOpacity(ParseColor(*ColorObj));
-		}
-	}
-
-	// Button
-	if (UButton* Btn = Cast<UButton>(Widget))
-	{
 		const TSharedPtr<FJsonObject>* BgColorObj;
 		if (Props->TryGetObjectField(TEXT("BackgroundColor"), BgColorObj))
 		{
@@ -1064,24 +1330,12 @@ TSharedPtr<FJsonObject> UWidgetFactoryGenerator::ExportPropertiesToJson(UWidget*
 	// Button
 	if (UButton* Btn = Cast<UButton>(Widget))
 	{
-		FLinearColor BgColor = Btn->GetBackgroundColor();
-		if (BgColor != FLinearColor::White)
+		if (TSharedPtr<FJsonObject> ButtonStyleJson = ButtonStyleToJson(Btn->GetStyle()))
 		{
-			Props->SetObjectField(TEXT("BackgroundColor"), ColorToJson(BgColor));
+			Props->SetObjectField(TEXT("ButtonStyle"), ButtonStyleJson);
 			bHasProps = true;
 		}
 
-		FLinearColor Color = Btn->GetColorAndOpacity();
-		if (Color != FLinearColor::White)
-		{
-			Props->SetObjectField(TEXT("ColorAndOpacity"), ColorToJson(Color));
-			bHasProps = true;
-		}
-	}
-
-	// Button
-	if (UButton* Btn = Cast<UButton>(Widget))
-	{
 		FLinearColor BgColor = Btn->GetBackgroundColor();
 		if (BgColor != FLinearColor::White)
 		{

@@ -521,6 +521,14 @@ static TSharedPtr<FJsonObject> MakeMarginJson(const FMargin& Margin)
 	return Json;
 }
 
+static bool IsMarginNearlyZero(const FMargin& Margin, float Tolerance = KINDA_SMALL_NUMBER)
+{
+	return FMath::IsNearlyZero(Margin.Left, Tolerance)
+		&& FMath::IsNearlyZero(Margin.Top, Tolerance)
+		&& FMath::IsNearlyZero(Margin.Right, Tolerance)
+		&& FMath::IsNearlyZero(Margin.Bottom, Tolerance);
+}
+
 static FVector2D ParseSlateVector2D(const TSharedPtr<FJsonObject>& Obj)
 {
 	double Width = 0.0;
@@ -556,6 +564,26 @@ static ESlateBrushDrawType::Type ParseBrushDrawType(const FString& DrawAs)
 	return ESlateBrushDrawType::Image;
 }
 
+static EStretch::Type ParseStretch(const FString& Stretch)
+{
+	if (Stretch == TEXT("None")) return EStretch::None;
+	if (Stretch == TEXT("Fill")) return EStretch::Fill;
+	if (Stretch == TEXT("ScaleToFit")) return EStretch::ScaleToFit;
+	if (Stretch == TEXT("ScaleToFitX")) return EStretch::ScaleToFitX;
+	if (Stretch == TEXT("ScaleToFitY")) return EStretch::ScaleToFitY;
+	if (Stretch == TEXT("ScaleToFill")) return EStretch::ScaleToFill;
+	if (Stretch == TEXT("ScaleBySafeZone")) return EStretch::ScaleBySafeZone;
+	if (Stretch == TEXT("UserSpecified")) return EStretch::UserSpecified;
+	return EStretch::ScaleToFit;
+}
+
+static EStretchDirection::Type ParseStretchDirection(const FString& StretchDirection)
+{
+	if (StretchDirection == TEXT("UpOnly")) return EStretchDirection::UpOnly;
+	if (StretchDirection == TEXT("DownOnly")) return EStretchDirection::DownOnly;
+	return EStretchDirection::Both;
+}
+
 static bool ApplySlateBrushFromJson(FSlateBrush& Brush, const TSharedPtr<FJsonObject>& BrushJson)
 {
 	if (!BrushJson.IsValid())
@@ -575,6 +603,7 @@ static bool ApplySlateBrushFromJson(FSlateBrush& Brush, const TSharedPtr<FJsonOb
 			Brush.SetResourceObject(Texture);
 			Brush.SetImageSize(FVector2D(Texture->GetSizeX(), Texture->GetSizeY()));
 			Brush.DrawAs = ESlateBrushDrawType::Image;
+			Brush.TintColor = FSlateColor(FLinearColor::White);
 			bApplied = true;
 		}
 	}
@@ -663,7 +692,7 @@ static bool BrushHasMeaningfulData(const FSlateBrush& Brush)
 	const FLinearColor Tint = Brush.TintColor.GetSpecifiedColor();
 	const FVector2D ImageSize = Brush.GetImageSize();
 	return Brush.GetResourceObject() != nullptr
-		|| !Brush.Margin.IsNearlyZero()
+		|| !IsMarginNearlyZero(Brush.Margin)
 		|| !ImageSize.IsZero()
 		|| Tint != FLinearColor::White
 		|| Brush.DrawAs != ESlateBrushDrawType::Image;
@@ -692,7 +721,7 @@ static TSharedPtr<FJsonObject> BrushToJson(const FSlateBrush& Brush)
 		bHasData = true;
 	}
 
-	if (!Brush.Margin.IsNearlyZero())
+	if (!IsMarginNearlyZero(Brush.Margin))
 	{
 		Json->SetObjectField(TEXT("Margin"), MakeMarginJson(Brush.Margin));
 		bHasData = true;
@@ -736,12 +765,12 @@ static TSharedPtr<FJsonObject> ButtonStyleToJson(const FButtonStyle& Style)
 	AddBrushField(TEXT("Pressed"), Style.Pressed);
 	AddBrushField(TEXT("Disabled"), Style.Disabled);
 
-	if (!Style.NormalPadding.IsNearlyZero())
+	if (!IsMarginNearlyZero(Style.NormalPadding))
 	{
 		Json->SetObjectField(TEXT("NormalPadding"), MakeMarginJson(Style.NormalPadding));
 		bHasData = true;
 	}
-	if (!Style.PressedPadding.IsNearlyZero())
+	if (!IsMarginNearlyZero(Style.PressedPadding))
 	{
 		Json->SetObjectField(TEXT("PressedPadding"), MakeMarginJson(Style.PressedPadding));
 		bHasData = true;
@@ -818,7 +847,7 @@ void UWidgetFactoryGenerator::SetWidgetProperties(UWidget* Widget, const TShared
 		if (Props->TryGetStringField(TEXT("Brush"), BrushPath))
 		{
 			UTexture2D* Tex = LoadAssetObject<UTexture2D>(BrushPath);
-			if (Tex) Img->SetBrushFromTexture(Tex);
+			if (Tex) Img->SetBrushFromTexture(Tex, true);
 		}
 	}
 
@@ -872,6 +901,26 @@ void UWidgetFactoryGenerator::SetWidgetProperties(UWidget* Widget, const TShared
 		if (Props->TryGetNumberField(TEXT("MinDesiredHeight"), H)) SB->SetMinDesiredHeight(H);
 		if (Props->TryGetNumberField(TEXT("MaxDesiredWidth"), W))  SB->SetMaxDesiredWidth(W);
 		if (Props->TryGetNumberField(TEXT("MaxDesiredHeight"), H)) SB->SetMaxDesiredHeight(H);
+	}
+
+	// ScaleBox
+	if (UScaleBox* ScaleBox = Cast<UScaleBox>(Widget))
+	{
+		FString Stretch;
+		if (Props->TryGetStringField(TEXT("Stretch"), Stretch))
+			ScaleBox->SetStretch(ParseStretch(Stretch));
+
+		FString StretchDirection;
+		if (Props->TryGetStringField(TEXT("StretchDirection"), StretchDirection))
+			ScaleBox->SetStretchDirection(ParseStretchDirection(StretchDirection));
+
+		bool bIgnoreInheritedScale = false;
+		if (Props->TryGetBoolField(TEXT("IgnoreInheritedScale"), bIgnoreInheritedScale))
+			ScaleBox->SetIgnoreInheritedScale(bIgnoreInheritedScale);
+
+		double UserSpecifiedScale = 1.0;
+		if (Props->TryGetNumberField(TEXT("UserSpecifiedScale"), UserSpecifiedScale))
+			ScaleBox->SetUserSpecifiedScale(UserSpecifiedScale);
 	}
 }
 

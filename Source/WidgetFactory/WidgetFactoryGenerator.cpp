@@ -17,9 +17,11 @@
 #include "Components/Image.h"
 #include "Components/Spacer.h"
 #include "Components/Border.h"
+#include "Components/BorderSlot.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
 #include "Components/SizeBox.h"
+#include "Components/SizeBoxSlot.h"
 #include "Components/GridPanel.h"
 #include "Components/UniformGridPanel.h"
 #include "Components/WrapBox.h"
@@ -31,6 +33,7 @@
 #include "Components/ComboBoxString.h"
 #include "Components/RichTextBlock.h"
 #include "Components/ScaleBox.h"
+#include "Components/ScaleBoxSlot.h"
 #include "Components/WidgetSwitcher.h"
 #include "Components/Throbber.h"
 #include "Components/CircularThrobber.h"
@@ -54,6 +57,7 @@
 #include "Subsystems/EditorAssetSubsystem.h"
 #include "Framework/Application/SlateApplication.h"
 #include "UObject/LinkerLoad.h"
+#include "UObject/UnrealType.h"
 #include "Editor.h"
 
 #if WITH_UNLUA
@@ -579,11 +583,71 @@ static EStretch::Type ParseStretch(const FString& Stretch)
 	return EStretch::ScaleToFit;
 }
 
+static FString StretchToString(EStretch::Type Stretch)
+{
+	switch (Stretch)
+	{
+	case EStretch::None: return TEXT("None");
+	case EStretch::Fill: return TEXT("Fill");
+	case EStretch::ScaleToFit: return TEXT("ScaleToFit");
+	case EStretch::ScaleToFitX: return TEXT("ScaleToFitX");
+	case EStretch::ScaleToFitY: return TEXT("ScaleToFitY");
+	case EStretch::ScaleToFill: return TEXT("ScaleToFill");
+	case EStretch::ScaleBySafeZone: return TEXT("ScaleBySafeZone");
+	case EStretch::UserSpecified: return TEXT("UserSpecified");
+	default: return TEXT("ScaleToFit");
+	}
+}
+
 static EStretchDirection::Type ParseStretchDirection(const FString& StretchDirection)
 {
 	if (StretchDirection == TEXT("UpOnly")) return EStretchDirection::UpOnly;
 	if (StretchDirection == TEXT("DownOnly")) return EStretchDirection::DownOnly;
 	return EStretchDirection::Both;
+}
+
+static FString StretchDirectionToString(EStretchDirection::Type StretchDirection)
+{
+	switch (StretchDirection)
+	{
+	case EStretchDirection::UpOnly: return TEXT("UpOnly");
+	case EStretchDirection::DownOnly: return TEXT("DownOnly");
+	case EStretchDirection::Both:
+	default:
+		return TEXT("Both");
+	}
+}
+
+static FString TextJustificationToString(ETextJustify::Type Justification)
+{
+	switch (Justification)
+	{
+	case ETextJustify::Center: return TEXT("Center");
+	case ETextJustify::Right: return TEXT("Right");
+	case ETextJustify::Left:
+	default:
+		return TEXT("Left");
+	}
+}
+
+static bool TryGetTextJustification(UWidget* Widget, ETextJustify::Type& OutJustification)
+{
+	if (!Widget)
+	{
+		return false;
+	}
+
+	if (const FProperty* JustificationProperty = Widget->GetClass()->FindPropertyByName(TEXT("Justification")))
+	{
+		if (const FByteProperty* ByteProperty = CastField<FByteProperty>(JustificationProperty))
+		{
+			const uint8 Value = ByteProperty->GetPropertyValue_InContainer(Widget);
+			OutJustification = static_cast<ETextJustify::Type>(Value);
+			return true;
+		}
+	}
+
+	return false;
 }
 
 static bool ApplySlateBrushFromJson(FSlateBrush& Brush, const TSharedPtr<FJsonObject>& BrushJson)
@@ -895,6 +959,105 @@ static TSharedPtr<FJsonObject> ButtonStyleToJson(const FButtonStyle& Style)
 	return bHasData ? Json : nullptr;
 }
 
+static TSharedPtr<FJsonObject> TextBlockStyleToJson(const FTextBlockStyle& Style)
+{
+	TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+	bool bHasData = false;
+
+	if (Style.Font.Size != 24)
+	{
+		Json->SetNumberField(TEXT("FontSize"), Style.Font.Size);
+		bHasData = true;
+	}
+
+	if (Style.Font.FontObject)
+	{
+		Json->SetStringField(TEXT("FontFamily"), Style.Font.FontObject->GetPathName());
+		bHasData = true;
+	}
+
+	const FLinearColor Color = Style.ColorAndOpacity.GetSpecifiedColor();
+	if (Color != FLinearColor::White)
+	{
+		Json->SetObjectField(TEXT("Color"), MakeColorJson(Color));
+		bHasData = true;
+	}
+
+	return bHasData ? Json : nullptr;
+}
+
+static TSharedPtr<FJsonObject> EditableTextBoxStyleToJson(const FEditableTextBoxStyle& Style)
+{
+	TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+	bool bHasData = false;
+
+	auto AddBrushField = [&](const TCHAR* FieldName, const FSlateBrush& Brush)
+	{
+		if (TSharedPtr<FJsonObject> BrushJson = BrushToJson(Brush))
+		{
+			Json->SetObjectField(FieldName, BrushJson);
+			bHasData = true;
+		}
+	};
+
+	AddBrushField(TEXT("BackgroundImageNormal"), Style.BackgroundImageNormal);
+	AddBrushField(TEXT("BackgroundImageHovered"), Style.BackgroundImageHovered);
+	AddBrushField(TEXT("BackgroundImageFocused"), Style.BackgroundImageFocused);
+	AddBrushField(TEXT("BackgroundImageReadOnly"), Style.BackgroundImageReadOnly);
+
+	if (!IsMarginNearlyZero(Style.Padding))
+	{
+		Json->SetObjectField(TEXT("Padding"), MakeMarginJson(Style.Padding));
+		bHasData = true;
+	}
+	if (!IsMarginNearlyZero(Style.HScrollBarPadding))
+	{
+		Json->SetObjectField(TEXT("HScrollBarPadding"), MakeMarginJson(Style.HScrollBarPadding));
+		bHasData = true;
+	}
+	if (!IsMarginNearlyZero(Style.VScrollBarPadding))
+	{
+		Json->SetObjectField(TEXT("VScrollBarPadding"), MakeMarginJson(Style.VScrollBarPadding));
+		bHasData = true;
+	}
+
+	const FLinearColor ForegroundColor = Style.ForegroundColor.GetSpecifiedColor();
+	if (ForegroundColor != FLinearColor::White)
+	{
+		Json->SetObjectField(TEXT("ForegroundColor"), MakeColorJson(ForegroundColor));
+		bHasData = true;
+	}
+
+	const FLinearColor FocusedForegroundColor = Style.FocusedForegroundColor.GetSpecifiedColor();
+	if (FocusedForegroundColor != FLinearColor::White)
+	{
+		Json->SetObjectField(TEXT("FocusedForegroundColor"), MakeColorJson(FocusedForegroundColor));
+		bHasData = true;
+	}
+
+	const FLinearColor ReadOnlyForegroundColor = Style.ReadOnlyForegroundColor.GetSpecifiedColor();
+	if (ReadOnlyForegroundColor != FLinearColor::White)
+	{
+		Json->SetObjectField(TEXT("ReadOnlyForegroundColor"), MakeColorJson(ReadOnlyForegroundColor));
+		bHasData = true;
+	}
+
+	const FLinearColor BackgroundColor = Style.BackgroundColor.GetSpecifiedColor();
+	if (BackgroundColor != FLinearColor::White)
+	{
+		Json->SetObjectField(TEXT("BackgroundColor"), MakeColorJson(BackgroundColor));
+		bHasData = true;
+	}
+
+	if (TSharedPtr<FJsonObject> TextStyleJson = TextBlockStyleToJson(Style.TextStyle))
+	{
+		Json->SetObjectField(TEXT("TextStyle"), TextStyleJson);
+		bHasData = true;
+	}
+
+	return bHasData ? Json : nullptr;
+}
+
 void UWidgetFactoryGenerator::SetWidgetProperties(UWidget* Widget, const TSharedPtr<FJsonObject>& Props)
 {
 	if (!Widget || !Props.IsValid()) return;
@@ -959,11 +1122,23 @@ void UWidgetFactoryGenerator::SetWidgetProperties(UWidget* Widget, const TShared
 		if (Props->TryGetObjectField(TEXT("Color"), ColorObj))
 			Img->SetColorAndOpacity(ParseColor(*ColorObj));
 
-		FString BrushPath;
-		if (Props->TryGetStringField(TEXT("Brush"), BrushPath))
+		const TSharedPtr<FJsonObject>* BrushObj = nullptr;
+		if (Props->TryGetObjectField(TEXT("Brush"), BrushObj))
 		{
-			UTexture2D* Tex = LoadAssetObject<UTexture2D>(BrushPath);
-			if (Tex) Img->SetBrushFromTexture(Tex, true);
+			FSlateBrush Brush = Img->GetBrush();
+			if (ApplySlateBrushFromJson(Brush, *BrushObj))
+			{
+				Img->SetBrush(Brush);
+			}
+		}
+		else
+		{
+			FString BrushPath;
+			if (Props->TryGetStringField(TEXT("Brush"), BrushPath))
+			{
+				UTexture2D* Tex = LoadAssetObject<UTexture2D>(BrushPath);
+				if (Tex) Img->SetBrushFromTexture(Tex, true);
+			}
 		}
 	}
 
@@ -1151,6 +1326,41 @@ static EVerticalAlignment ParseVAlign(const FString& S)
 	return VAlign_Top;
 }
 
+static FString HAlignToString(EHorizontalAlignment Align)
+{
+	switch (Align)
+	{
+	case HAlign_Center: return TEXT("Center");
+	case HAlign_Right: return TEXT("Right");
+	case HAlign_Fill: return TEXT("Fill");
+	default: return TEXT("Left");
+	}
+}
+
+static FString VAlignToString(EVerticalAlignment Align)
+{
+	switch (Align)
+	{
+	case VAlign_Center: return TEXT("Center");
+	case VAlign_Bottom: return TEXT("Bottom");
+	case VAlign_Fill: return TEXT("Fill");
+	default: return TEXT("Top");
+	}
+}
+
+static FVector2D GetDefaultCanvasAlignmentForAnchorName(const FString& AnchName)
+{
+	if (AnchName == TEXT("Center"))       return FVector2D(0.5f, 0.5f);
+	if (AnchName == TEXT("TopCenter"))    return FVector2D(0.5f, 0.0f);
+	if (AnchName == TEXT("TopRight"))     return FVector2D(1.0f, 0.0f);
+	if (AnchName == TEXT("BottomLeft"))   return FVector2D(0.0f, 1.0f);
+	if (AnchName == TEXT("BottomCenter")) return FVector2D(0.5f, 1.0f);
+	if (AnchName == TEXT("BottomRight"))  return FVector2D(1.0f, 1.0f);
+	if (AnchName == TEXT("CenterLeft"))   return FVector2D(0.0f, 0.5f);
+	if (AnchName == TEXT("CenterRight"))  return FVector2D(1.0f, 0.5f);
+	return FVector2D::ZeroVector;
+}
+
 void UWidgetFactoryGenerator::SetCanvasSlotProperties(UWidget* Widget, const TSharedPtr<FJsonObject>& Slot)
 {
 	UCanvasPanelSlot* CS = Cast<UCanvasPanelSlot>(Widget->Slot);
@@ -1259,7 +1469,9 @@ void UWidgetFactoryGenerator::SetSlotProperties(UWidget* Widget, const TSharedPt
 	// ScrollBoxSlot
 	if (UScrollBoxSlot* SS = Cast<UScrollBoxSlot>(Widget->Slot))
 	{
+		SS->SetHorizontalAlignment(HAlign_Fill);
 		FString HA; if (Slot->TryGetStringField(TEXT("HAlign"), HA)) SS->SetHorizontalAlignment(ParseHAlign(HA));
+		SS->SetPadding(FMargin(0.f));
 		const TSharedPtr<FJsonObject>* Pad;
 		if (Slot->TryGetObjectField(TEXT("Padding"), Pad)) SS->SetPadding(ParseMargin(*Pad));
 		return;
@@ -1268,6 +1480,9 @@ void UWidgetFactoryGenerator::SetSlotProperties(UWidget* Widget, const TSharedPt
 	// ButtonSlot
 	if (UButtonSlot* BS = Cast<UButtonSlot>(Widget->Slot))
 	{
+		BS->SetHorizontalAlignment(HAlign_Center);
+		BS->SetVerticalAlignment(VAlign_Center);
+		BS->SetPadding(FMargin(4.f, 2.f));
 		FString HA; if (Slot->TryGetStringField(TEXT("HAlign"), HA)) BS->SetHorizontalAlignment(ParseHAlign(HA));
 		FString VA; if (Slot->TryGetStringField(TEXT("VAlign"), VA)) BS->SetVerticalAlignment(ParseVAlign(VA));
 		const TSharedPtr<FJsonObject>* Pad;
@@ -1275,9 +1490,12 @@ void UWidgetFactoryGenerator::SetSlotProperties(UWidget* Widget, const TSharedPt
 		return;
 	}
 
-	// ButtonSlot
-	if (UButtonSlot* BS = Cast<UButtonSlot>(Widget->Slot))
+	// BorderSlot
+	if (UBorderSlot* BS = Cast<UBorderSlot>(Widget->Slot))
 	{
+		BS->SetHorizontalAlignment(HAlign_Fill);
+		BS->SetVerticalAlignment(VAlign_Fill);
+		BS->SetPadding(FMargin(4.f, 2.f));
 		FString HA; if (Slot->TryGetStringField(TEXT("HAlign"), HA)) BS->SetHorizontalAlignment(ParseHAlign(HA));
 		FString VA; if (Slot->TryGetStringField(TEXT("VAlign"), VA)) BS->SetVerticalAlignment(ParseVAlign(VA));
 		const TSharedPtr<FJsonObject>* Pad;
@@ -1285,19 +1503,35 @@ void UWidgetFactoryGenerator::SetSlotProperties(UWidget* Widget, const TSharedPt
 		return;
 	}
 
-	// ButtonSlot
-	if (UButtonSlot* BS = Cast<UButtonSlot>(Widget->Slot))
+	// SizeBoxSlot
+	if (USizeBoxSlot* BS = Cast<USizeBoxSlot>(Widget->Slot))
 	{
+		BS->SetHorizontalAlignment(HAlign_Fill);
+		BS->SetVerticalAlignment(VAlign_Fill);
+		BS->SetPadding(FMargin(0.f));
 		FString HA; if (Slot->TryGetStringField(TEXT("HAlign"), HA)) BS->SetHorizontalAlignment(ParseHAlign(HA));
 		FString VA; if (Slot->TryGetStringField(TEXT("VAlign"), VA)) BS->SetVerticalAlignment(ParseVAlign(VA));
 		const TSharedPtr<FJsonObject>* Pad;
 		if (Slot->TryGetObjectField(TEXT("Padding"), Pad)) BS->SetPadding(ParseMargin(*Pad));
+		return;
+	}
+
+	// ScaleBoxSlot
+	if (UScaleBoxSlot* BS = Cast<UScaleBoxSlot>(Widget->Slot))
+	{
+		BS->SetHorizontalAlignment(HAlign_Center);
+		BS->SetVerticalAlignment(VAlign_Center);
+		FString HA; if (Slot->TryGetStringField(TEXT("HAlign"), HA)) BS->SetHorizontalAlignment(ParseHAlign(HA));
+		FString VA; if (Slot->TryGetStringField(TEXT("VAlign"), VA)) BS->SetVerticalAlignment(ParseVAlign(VA));
 		return;
 	}
 
 	// OverlaySlot
 	if (UOverlaySlot* OS = Cast<UOverlaySlot>(Widget->Slot))
 	{
+		OS->SetHorizontalAlignment(HAlign_Left);
+		OS->SetVerticalAlignment(VAlign_Top);
+		OS->SetPadding(FMargin(0.f));
 		FString HA; if (Slot->TryGetStringField(TEXT("HAlign"), HA)) OS->SetHorizontalAlignment(ParseHAlign(HA));
 		FString VA; if (Slot->TryGetStringField(TEXT("VAlign"), VA)) OS->SetVerticalAlignment(ParseVAlign(VA));
 		const TSharedPtr<FJsonObject>* Pad;
@@ -1359,8 +1593,6 @@ UWidget* UWidgetFactoryGenerator::CreateWidgetFromJson(
 		const TSharedPtr<FJsonObject>* SlotJson = nullptr;
 		if (Json->TryGetObjectField(TEXT("Slot"), SlotJson))
 			SetSlotProperties(NewWidget, *SlotJson);
-		else if (PropsJson && PropsJson->IsValid())
-			SetSlotProperties(NewWidget, *PropsJson);
 	}
 	else
 	{
@@ -1568,7 +1800,12 @@ TSharedPtr<FJsonObject> UWidgetFactoryGenerator::ExportPropertiesToJson(UWidget*
 
 		if (TB->GetAutoWrapText()) { Props->SetBoolField(TEXT("AutoWrap"), true); bHasProps = true; }
 
-		// Justification — skip export (getter not available in UE5.7)
+		ETextJustify::Type Justification = ETextJustify::Left;
+		if (TryGetTextJustification(TB, Justification) && Justification != ETextJustify::Left)
+		{
+			Props->SetStringField(TEXT("Justification"), TextJustificationToString(Justification));
+			bHasProps = true;
+		}
 	}
 
 	// Image
@@ -1577,9 +1814,9 @@ TSharedPtr<FJsonObject> UWidgetFactoryGenerator::ExportPropertiesToJson(UWidget*
 		FLinearColor Color = Img->GetColorAndOpacity();
 		if (Color != FLinearColor::White) { Props->SetObjectField(TEXT("Color"), ColorToJson(Color)); bHasProps = true; }
 
-		if (Img->GetBrush().GetResourceObject())
+		if (TSharedPtr<FJsonObject> BrushJson = BrushToJson(Img->GetBrush()))
 		{
-			Props->SetStringField(TEXT("Brush"), Img->GetBrush().GetResourceObject()->GetPathName());
+			Props->SetObjectField(TEXT("Brush"), BrushJson);
 			bHasProps = true;
 		}
 	}
@@ -1608,6 +1845,51 @@ TSharedPtr<FJsonObject> UWidgetFactoryGenerator::ExportPropertiesToJson(UWidget*
 		}
 	}
 
+	// EditableTextBox
+	if (UEditableTextBox* EditableTextBox = Cast<UEditableTextBox>(Widget))
+	{
+		const FString Text = EditableTextBox->GetText().ToString();
+		if (!Text.IsEmpty()) { Props->SetStringField(TEXT("Text"), Text); bHasProps = true; }
+
+		const FString HintText = EditableTextBox->GetHintText().ToString();
+		if (!HintText.IsEmpty()) { Props->SetStringField(TEXT("HintText"), HintText); bHasProps = true; }
+
+		if (EditableTextBox->GetIsPassword()) { Props->SetBoolField(TEXT("IsPassword"), true); bHasProps = true; }
+		if (EditableTextBox->GetIsReadOnly()) { Props->SetBoolField(TEXT("IsReadOnly"), true); bHasProps = true; }
+
+		const float MinimumDesiredWidth = EditableTextBox->GetMinimumDesiredWidth();
+		if (!FMath::IsNearlyZero(MinimumDesiredWidth))
+		{
+			Props->SetNumberField(TEXT("MinimumDesiredWidth"), MinimumDesiredWidth);
+			bHasProps = true;
+		}
+
+		if (EditableTextBox->GetJustification() != ETextJustify::Left)
+		{
+			Props->SetStringField(TEXT("Justification"), TextJustificationToString(EditableTextBox->GetJustification()));
+			bHasProps = true;
+		}
+
+		if (TSharedPtr<FJsonObject> StyleJson = EditableTextBoxStyleToJson(EditableTextBox->GetWidgetStyle()))
+		{
+			Props->SetObjectField(TEXT("WidgetStyle"), StyleJson);
+			bHasProps = true;
+		}
+
+		const FLinearColor TextColor = EditableTextBox->GetWidgetStyle().TextStyle.ColorAndOpacity.GetSpecifiedColor();
+		if (TextColor != FLinearColor::White)
+		{
+			Props->SetObjectField(TEXT("Color"), ColorToJson(TextColor));
+			bHasProps = true;
+		}
+
+		if (EditableTextBox->GetWidgetStyle().TextStyle.Font.Size != 24)
+		{
+			Props->SetNumberField(TEXT("FontSize"), EditableTextBox->GetWidgetStyle().TextStyle.Font.Size);
+			bHasProps = true;
+		}
+	}
+
 	// ProgressBar
 	if (UProgressBar* PB = Cast<UProgressBar>(Widget))
 	{
@@ -1628,6 +1910,77 @@ TSharedPtr<FJsonObject> UWidgetFactoryGenerator::ExportPropertiesToJson(UWidget*
 	}
 
 	// SizeBox — override values not easily readable at runtime, skip
+	if (USizeBox* SB = Cast<USizeBox>(Widget))
+	{
+		const float WidthOverride = SB->GetWidthOverride();
+		if (!FMath::IsNearlyZero(WidthOverride))
+		{
+			Props->SetNumberField(TEXT("WidthOverride"), WidthOverride);
+			bHasProps = true;
+		}
+
+		const float HeightOverride = SB->GetHeightOverride();
+		if (!FMath::IsNearlyZero(HeightOverride))
+		{
+			Props->SetNumberField(TEXT("HeightOverride"), HeightOverride);
+			bHasProps = true;
+		}
+
+		const float MinDesiredWidth = SB->GetMinDesiredWidth();
+		if (!FMath::IsNearlyZero(MinDesiredWidth))
+		{
+			Props->SetNumberField(TEXT("MinDesiredWidth"), MinDesiredWidth);
+			bHasProps = true;
+		}
+
+		const float MinDesiredHeight = SB->GetMinDesiredHeight();
+		if (!FMath::IsNearlyZero(MinDesiredHeight))
+		{
+			Props->SetNumberField(TEXT("MinDesiredHeight"), MinDesiredHeight);
+			bHasProps = true;
+		}
+
+		const float MaxDesiredWidth = SB->GetMaxDesiredWidth();
+		if (!FMath::IsNearlyZero(MaxDesiredWidth))
+		{
+			Props->SetNumberField(TEXT("MaxDesiredWidth"), MaxDesiredWidth);
+			bHasProps = true;
+		}
+
+		const float MaxDesiredHeight = SB->GetMaxDesiredHeight();
+		if (!FMath::IsNearlyZero(MaxDesiredHeight))
+		{
+			Props->SetNumberField(TEXT("MaxDesiredHeight"), MaxDesiredHeight);
+			bHasProps = true;
+		}
+	}
+
+	if (UScaleBox* ScaleBox = Cast<UScaleBox>(Widget))
+	{
+		if (ScaleBox->GetStretch() != EStretch::ScaleToFit)
+		{
+			Props->SetStringField(TEXT("Stretch"), StretchToString(ScaleBox->GetStretch()));
+			bHasProps = true;
+		}
+
+		if (ScaleBox->GetStretchDirection() != EStretchDirection::Both)
+		{
+			Props->SetStringField(TEXT("StretchDirection"), StretchDirectionToString(ScaleBox->GetStretchDirection()));
+			bHasProps = true;
+		}
+
+		if (ScaleBox->IsIgnoreInheritedScale())
+		{
+			Props->SetBoolField(TEXT("IgnoreInheritedScale"), true);
+			bHasProps = true;
+		}
+
+		if (!FMath::IsNearlyEqual(ScaleBox->GetUserSpecifiedScale(), 1.0f))
+		{
+			Props->SetNumberField(TEXT("UserSpecifiedScale"), ScaleBox->GetUserSpecifiedScale());
+			bHasProps = true;
+		}
+	}
 
 	return bHasProps ? Props : TSharedPtr<FJsonObject>(nullptr);
 }
@@ -1690,14 +2043,15 @@ TSharedPtr<FJsonObject> UWidgetFactoryGenerator::ExportSlotToJson(UWidget* Widge
 		}
 
 		FVector2D Align = CS->GetAlignment();
-		// Only export non-default alignment (skip if it matches the anchor preset default)
-		bool bDefaultAlign = false;
-		if (AnchName == TEXT("TopLeft") && Align.IsNearlyZero()) bDefaultAlign = true;
-		else if (AnchName == TEXT("Center") && Align.Equals(FVector2D(0.5, 0.5), 0.01)) bDefaultAlign = true;
-		else if (AnchName == TEXT("Fill") && Align.IsNearlyZero()) bDefaultAlign = true;
-		else if (Align.IsNearlyZero()) bDefaultAlign = true;
+		// Only omit alignment when it matches the preset that generation will recreate.
+		// A centered anchor with Alignment=(0,0) is *not* default for the "Center" preset.
+		const FVector2D DefaultAlign = GetDefaultCanvasAlignmentForAnchorName(AnchName);
+		const bool bShouldExportAlign =
+			AnchName.IsEmpty()
+				? !Align.IsNearlyZero()
+				: !Align.Equals(DefaultAlign, 0.01f);
 
-		if (!bDefaultAlign)
+		if (bShouldExportAlign)
 		{
 			auto AlignObj = MakeShared<FJsonObject>();
 			AlignObj->SetNumberField(TEXT("X"), Align.X);
@@ -1731,8 +2085,7 @@ TSharedPtr<FJsonObject> UWidgetFactoryGenerator::ExportSlotToJson(UWidget* Widge
 			}
 		}
 
-		if (!CS->GetAutoSize())
-			SlotJson->SetBoolField(TEXT("AutoSize"), false);
+		SlotJson->SetBoolField(TEXT("AutoSize"), CS->GetAutoSize());
 
 		if (CS->GetZOrder() != 0)
 			SlotJson->SetNumberField(TEXT("ZOrder"), CS->GetZOrder());
@@ -1801,6 +2154,112 @@ TSharedPtr<FJsonObject> UWidgetFactoryGenerator::ExportSlotToJson(UWidget* Widge
 		FMargin Pad = VS->GetPadding();
 		if (Pad.Left != 0 || Pad.Top != 0 || Pad.Right != 0 || Pad.Bottom != 0)
 			SlotJson->SetObjectField(TEXT("Padding"), MarginToJson(Pad));
+		bHasSlot = true;
+	}
+
+	if (UScrollBoxSlot* SS = Cast<UScrollBoxSlot>(Widget->Slot))
+	{
+		if (SS->GetHorizontalAlignment() != HAlign_Fill)
+		{
+			SlotJson->SetStringField(TEXT("HAlign"), HAlignToString(SS->GetHorizontalAlignment()));
+		}
+
+		FMargin Pad = SS->GetPadding();
+		if (!IsMarginNearlyZero(Pad))
+		{
+			SlotJson->SetObjectField(TEXT("Padding"), MarginToJson(Pad));
+		}
+		bHasSlot = true;
+	}
+
+	if (UButtonSlot* BS = Cast<UButtonSlot>(Widget->Slot))
+	{
+		if (BS->GetHorizontalAlignment() != HAlign_Center)
+		{
+			SlotJson->SetStringField(TEXT("HAlign"), HAlignToString(BS->GetHorizontalAlignment()));
+		}
+		if (BS->GetVerticalAlignment() != VAlign_Center)
+		{
+			SlotJson->SetStringField(TEXT("VAlign"), VAlignToString(BS->GetVerticalAlignment()));
+		}
+
+		const FMargin Pad = BS->GetPadding();
+		const FMargin DefaultPad(4.f, 2.f);
+		if (!(Pad == DefaultPad))
+		{
+			SlotJson->SetObjectField(TEXT("Padding"), MarginToJson(Pad));
+		}
+		bHasSlot = true;
+	}
+
+	if (UBorderSlot* BS = Cast<UBorderSlot>(Widget->Slot))
+	{
+		if (BS->GetHorizontalAlignment() != HAlign_Fill)
+		{
+			SlotJson->SetStringField(TEXT("HAlign"), HAlignToString(BS->GetHorizontalAlignment()));
+		}
+		if (BS->GetVerticalAlignment() != VAlign_Fill)
+		{
+			SlotJson->SetStringField(TEXT("VAlign"), VAlignToString(BS->GetVerticalAlignment()));
+		}
+
+		const FMargin Pad = BS->GetPadding();
+		const FMargin DefaultPad(4.f, 2.f);
+		if (!(Pad == DefaultPad))
+		{
+			SlotJson->SetObjectField(TEXT("Padding"), MarginToJson(Pad));
+		}
+		bHasSlot = true;
+	}
+
+	if (USizeBoxSlot* BS = Cast<USizeBoxSlot>(Widget->Slot))
+	{
+		if (BS->GetHorizontalAlignment() != HAlign_Fill)
+		{
+			SlotJson->SetStringField(TEXT("HAlign"), HAlignToString(BS->GetHorizontalAlignment()));
+		}
+		if (BS->GetVerticalAlignment() != VAlign_Fill)
+		{
+			SlotJson->SetStringField(TEXT("VAlign"), VAlignToString(BS->GetVerticalAlignment()));
+		}
+
+		const FMargin Pad = BS->GetPadding();
+		if (!IsMarginNearlyZero(Pad))
+		{
+			SlotJson->SetObjectField(TEXT("Padding"), MarginToJson(Pad));
+		}
+		bHasSlot = true;
+	}
+
+	if (UScaleBoxSlot* BS = Cast<UScaleBoxSlot>(Widget->Slot))
+	{
+		if (BS->GetHorizontalAlignment() != HAlign_Center)
+		{
+			SlotJson->SetStringField(TEXT("HAlign"), HAlignToString(BS->GetHorizontalAlignment()));
+		}
+		if (BS->GetVerticalAlignment() != VAlign_Center)
+		{
+			SlotJson->SetStringField(TEXT("VAlign"), VAlignToString(BS->GetVerticalAlignment()));
+		}
+		bHasSlot = true;
+	}
+
+	if (UOverlaySlot* OS = Cast<UOverlaySlot>(Widget->Slot))
+	{
+		if (OS->GetHorizontalAlignment() != HAlign_Left)
+		{
+			SlotJson->SetStringField(TEXT("HAlign"), HAlignToString(OS->GetHorizontalAlignment()));
+		}
+		if (OS->GetVerticalAlignment() != VAlign_Top)
+		{
+			SlotJson->SetStringField(TEXT("VAlign"), VAlignToString(OS->GetVerticalAlignment()));
+		}
+
+		const FMargin Pad = OS->GetPadding();
+		if (!IsMarginNearlyZero(Pad))
+		{
+			SlotJson->SetObjectField(TEXT("Padding"), MarginToJson(Pad));
+		}
 		bHasSlot = true;
 	}
 

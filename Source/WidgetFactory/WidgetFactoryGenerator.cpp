@@ -547,6 +547,7 @@ static FString BrushDrawTypeToString(ESlateBrushDrawType::Type DrawAs)
 {
 	switch (DrawAs)
 	{
+	case ESlateBrushDrawType::NoDrawType: return TEXT("NoDrawType");
 	case ESlateBrushDrawType::Box: return TEXT("Box");
 	case ESlateBrushDrawType::Border: return TEXT("Border");
 	case ESlateBrushDrawType::RoundedBox: return TEXT("RoundedBox");
@@ -558,6 +559,7 @@ static FString BrushDrawTypeToString(ESlateBrushDrawType::Type DrawAs)
 
 static ESlateBrushDrawType::Type ParseBrushDrawType(const FString& DrawAs)
 {
+	if (DrawAs == TEXT("NoDrawType")) return ESlateBrushDrawType::NoDrawType;
 	if (DrawAs == TEXT("Box")) return ESlateBrushDrawType::Box;
 	if (DrawAs == TEXT("Border")) return ESlateBrushDrawType::Border;
 	if (DrawAs == TEXT("RoundedBox")) return ESlateBrushDrawType::RoundedBox;
@@ -682,6 +684,120 @@ static bool ApplyButtonStyleFromJson(UButton* Button, const TSharedPtr<FJsonObje
 	if (bApplied)
 	{
 		Button->SetStyle(Style);
+	}
+
+	return bApplied;
+}
+
+static bool ApplyTextBlockStyleFromJson(FTextBlockStyle& Style, const TSharedPtr<FJsonObject>& StyleJson)
+{
+	if (!StyleJson.IsValid())
+	{
+		return false;
+	}
+
+	bool bApplied = false;
+
+	int32 FontSize = 0;
+	if (StyleJson->TryGetNumberField(TEXT("FontSize"), FontSize))
+	{
+		Style.Font.Size = FontSize;
+		bApplied = true;
+	}
+
+	FString FontFamily;
+	if (StyleJson->TryGetStringField(TEXT("FontFamily"), FontFamily))
+	{
+		UObject* FontObj = LoadAssetObject<UObject>(FontFamily);
+		if (FontObj)
+		{
+			Style.Font.FontObject = FontObj;
+			bApplied = true;
+		}
+	}
+
+	const TSharedPtr<FJsonObject>* ColorObj = nullptr;
+	if (StyleJson->TryGetObjectField(TEXT("Color"), ColorObj)
+		|| StyleJson->TryGetObjectField(TEXT("ColorAndOpacity"), ColorObj)
+		|| StyleJson->TryGetObjectField(TEXT("TintColor"), ColorObj))
+	{
+		Style.ColorAndOpacity = FSlateColor(ParseColor(*ColorObj));
+		bApplied = true;
+	}
+
+	return bApplied;
+}
+
+static bool ApplyEditableTextBoxStyleFromJson(FEditableTextBoxStyle& Style, const TSharedPtr<FJsonObject>& StyleJson)
+{
+	if (!StyleJson.IsValid())
+	{
+		return false;
+	}
+
+	bool bApplied = false;
+
+	const TSharedPtr<FJsonObject>* BrushJson = nullptr;
+	if (StyleJson->TryGetObjectField(TEXT("BackgroundImageNormal"), BrushJson))
+	{
+		bApplied |= ApplySlateBrushFromJson(Style.BackgroundImageNormal, *BrushJson);
+	}
+	if (StyleJson->TryGetObjectField(TEXT("BackgroundImageHovered"), BrushJson))
+	{
+		bApplied |= ApplySlateBrushFromJson(Style.BackgroundImageHovered, *BrushJson);
+	}
+	if (StyleJson->TryGetObjectField(TEXT("BackgroundImageFocused"), BrushJson))
+	{
+		bApplied |= ApplySlateBrushFromJson(Style.BackgroundImageFocused, *BrushJson);
+	}
+	if (StyleJson->TryGetObjectField(TEXT("BackgroundImageReadOnly"), BrushJson))
+	{
+		bApplied |= ApplySlateBrushFromJson(Style.BackgroundImageReadOnly, *BrushJson);
+	}
+
+	const TSharedPtr<FJsonObject>* MarginJson = nullptr;
+	if (StyleJson->TryGetObjectField(TEXT("Padding"), MarginJson))
+	{
+		Style.Padding = ParseMargin(*MarginJson);
+		bApplied = true;
+	}
+	if (StyleJson->TryGetObjectField(TEXT("HScrollBarPadding"), MarginJson))
+	{
+		Style.HScrollBarPadding = ParseMargin(*MarginJson);
+		bApplied = true;
+	}
+	if (StyleJson->TryGetObjectField(TEXT("VScrollBarPadding"), MarginJson))
+	{
+		Style.VScrollBarPadding = ParseMargin(*MarginJson);
+		bApplied = true;
+	}
+
+	const TSharedPtr<FJsonObject>* ColorObj = nullptr;
+	if (StyleJson->TryGetObjectField(TEXT("ForegroundColor"), ColorObj))
+	{
+		Style.ForegroundColor = FSlateColor(ParseColor(*ColorObj));
+		bApplied = true;
+	}
+	if (StyleJson->TryGetObjectField(TEXT("FocusedForegroundColor"), ColorObj))
+	{
+		Style.FocusedForegroundColor = FSlateColor(ParseColor(*ColorObj));
+		bApplied = true;
+	}
+	if (StyleJson->TryGetObjectField(TEXT("ReadOnlyForegroundColor"), ColorObj))
+	{
+		Style.ReadOnlyForegroundColor = FSlateColor(ParseColor(*ColorObj));
+		bApplied = true;
+	}
+	if (StyleJson->TryGetObjectField(TEXT("BackgroundColor"), ColorObj))
+	{
+		Style.BackgroundColor = FSlateColor(ParseColor(*ColorObj));
+		bApplied = true;
+	}
+
+	const TSharedPtr<FJsonObject>* TextStyleJson = nullptr;
+	if (StyleJson->TryGetObjectField(TEXT("TextStyle"), TextStyleJson))
+	{
+		bApplied |= ApplyTextBlockStyleFromJson(Style.TextStyle, *TextStyleJson);
 	}
 
 	return bApplied;
@@ -870,6 +986,98 @@ void UWidgetFactoryGenerator::SetWidgetProperties(UWidget* Widget, const TShared
 		if (Props->TryGetObjectField(TEXT("ColorAndOpacity"), ColorObj))
 		{
 			Btn->SetColorAndOpacity(ParseColor(*ColorObj));
+		}
+	}
+
+	// EditableTextBox
+	if (UEditableTextBox* EditableTextBox = Cast<UEditableTextBox>(Widget))
+	{
+		FString Text;
+		if (Props->TryGetStringField(TEXT("Text"), Text))
+		{
+			EditableTextBox->SetText(FText::FromString(Text));
+		}
+
+		FString HintText;
+		if (Props->TryGetStringField(TEXT("HintText"), HintText))
+		{
+			EditableTextBox->SetHintText(FText::FromString(HintText));
+		}
+
+		bool bIsPassword = false;
+		if (Props->TryGetBoolField(TEXT("IsPassword"), bIsPassword))
+		{
+			EditableTextBox->SetIsPassword(bIsPassword);
+		}
+
+		bool bIsReadOnly = false;
+		if (Props->TryGetBoolField(TEXT("IsReadOnly"), bIsReadOnly))
+		{
+			EditableTextBox->SetIsReadOnly(bIsReadOnly);
+		}
+
+		double MinDesiredWidth = 0.0;
+		if (Props->TryGetNumberField(TEXT("MinimumDesiredWidth"), MinDesiredWidth))
+		{
+			EditableTextBox->SetMinDesiredWidth(MinDesiredWidth);
+		}
+
+		FString Justify;
+		if (Props->TryGetStringField(TEXT("Justification"), Justify))
+		{
+			if (Justify == TEXT("Center")) EditableTextBox->SetJustification(ETextJustify::Center);
+			else if (Justify == TEXT("Right")) EditableTextBox->SetJustification(ETextJustify::Right);
+			else EditableTextBox->SetJustification(ETextJustify::Left);
+		}
+
+		FEditableTextBoxStyle Style = EditableTextBox->GetWidgetStyle();
+		bool bStyleChanged = false;
+
+		const TSharedPtr<FJsonObject>* StyleObj = nullptr;
+		if (Props->TryGetObjectField(TEXT("WidgetStyle"), StyleObj))
+		{
+			bStyleChanged |= ApplyEditableTextBoxStyleFromJson(Style, *StyleObj);
+		}
+
+		int32 FontSize = 0;
+		if (Props->TryGetNumberField(TEXT("FontSize"), FontSize))
+		{
+			Style.TextStyle.Font.Size = FontSize;
+			bStyleChanged = true;
+		}
+
+		FString FontFamily;
+		if (Props->TryGetStringField(TEXT("FontFamily"), FontFamily))
+		{
+			UObject* FontObj = LoadAssetObject<UObject>(FontFamily);
+			if (FontObj)
+			{
+				Style.TextStyle.Font.FontObject = FontObj;
+				bStyleChanged = true;
+			}
+		}
+
+		const TSharedPtr<FJsonObject>* ColorObj = nullptr;
+		if (Props->TryGetObjectField(TEXT("Color"), ColorObj)
+			|| Props->TryGetObjectField(TEXT("ForegroundColor"), ColorObj))
+		{
+			const FLinearColor TextColor = ParseColor(*ColorObj);
+			Style.TextStyle.ColorAndOpacity = FSlateColor(TextColor);
+			Style.ForegroundColor = FSlateColor(TextColor);
+			Style.FocusedForegroundColor = FSlateColor(TextColor);
+			Style.ReadOnlyForegroundColor = FSlateColor(TextColor);
+			bStyleChanged = true;
+		}
+
+		if (Props->TryGetObjectField(TEXT("BackgroundColor"), ColorObj))
+		{
+			Style.BackgroundColor = FSlateColor(ParseColor(*ColorObj));
+			bStyleChanged = true;
+		}
+
+		if (bStyleChanged)
+		{
+			EditableTextBox->SetWidgetStyle(Style);
 		}
 	}
 

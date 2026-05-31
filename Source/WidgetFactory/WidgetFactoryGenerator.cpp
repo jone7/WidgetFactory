@@ -51,6 +51,8 @@
 #include "EdGraphSchema_K2.h"
 #include "K2Node_FunctionResult.h"
 #include "HAL/PlatformFileManager.h"
+#include "HAL/PlatformProcess.h"
+#include "HAL/PlatformTime.h"
 #include "Interfaces/IPluginManager.h"
 #include "Internationalization/Regex.h"
 #include "Subsystems/AssetEditorSubsystem.h"
@@ -156,6 +158,46 @@ TObject* LoadAssetObject(const FString& AssetPath)
 {
 	const FString LoadPath = NormalizeObjectLoadPath(AssetPath);
 	return LoadPath.IsEmpty() ? nullptr : LoadObject<TObject>(nullptr, *LoadPath);
+}
+
+bool EndPlaySessionIfActiveForOverwrite(const FString& FullPath)
+{
+	if (!GEditor || GEditor->PlayWorld == nullptr)
+	{
+		return true;
+	}
+
+	UE_LOG(LogWidgetFactory, Warning,
+		TEXT("PIE is active while overwriting an existing widget asset. Stopping PIE first: %s"),
+		*FullPath);
+
+	GEditor->RequestEndPlayMap();
+
+	const double DeadlineSeconds = FPlatformTime::Seconds() + 5.0;
+	while (GEditor->PlayWorld != nullptr && FPlatformTime::Seconds() < DeadlineSeconds)
+	{
+		if (FSlateApplication::IsInitialized())
+		{
+			FSlateApplication::Get().Tick(ESlateTickType::Time);
+		}
+		FPlatformProcess::Sleep(0.05f);
+	}
+
+	if (GEditor->PlayWorld != nullptr)
+	{
+		GEditor->EndPlayMap();
+	}
+
+	FlushAsyncLoading();
+	if (GEditor->PlayWorld != nullptr)
+	{
+		UE_LOG(LogWidgetFactory, Error,
+			TEXT("PIE is still active; aborting widget overwrite to avoid editor crash: %s"),
+			*FullPath);
+		return false;
+	}
+
+	return true;
 }
 }
 
@@ -424,6 +466,11 @@ UWidgetBlueprint* UWidgetFactoryGenerator::CreateWidgetBlueprint(const FString& 
 	if (FPlatformFileManager::Get().GetPlatformFile().FileExists(*AssetFile))
 	{
 		UE_LOG(LogWidgetFactory, Warning, TEXT("覆盖已有资源: %s"), *FullPath);
+
+		if (!EndPlaySessionIfActiveForOverwrite(FullPath))
+		{
+			return nullptr;
+		}
 
 		if (!PrepareExistingAssetForOverwrite(FullPath, WidgetName))
 		{

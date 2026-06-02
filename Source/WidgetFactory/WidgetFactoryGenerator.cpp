@@ -458,7 +458,7 @@ bool UWidgetFactoryGenerator::ResetWidgetBlueprintForReuse(UWidgetBlueprint* Wid
 
 // ─── Blueprint creation ─────────────────────────────────────────────────────
 
-UWidgetBlueprint* UWidgetFactoryGenerator::CreateWidgetBlueprint(const FString& PackagePath, const FString& WidgetName)
+UWidgetBlueprint* UWidgetFactoryGenerator::CreateWidgetBlueprint(const FString& PackagePath, const FString& WidgetName, UClass* ParentClass)
 {
 	FString FullPath = PackagePath / WidgetName;
 	FString AssetFile = FPackageName::LongPackageNameToFilename(FullPath, FPackageName::GetAssetPackageExtension());
@@ -523,9 +523,15 @@ UWidgetBlueprint* UWidgetFactoryGenerator::CreateWidgetBlueprint(const FString& 
 	UPackage* Package = CreatePackage(*FullPath);
 	if (!Package) { UE_LOG(LogWidgetFactory, Error, TEXT("创建 Package 失败: %s"), *FullPath); return nullptr; }
 
+	if (!ParentClass || !ParentClass->IsChildOf(UUserWidget::StaticClass()))
+	{
+		UE_LOG(LogWidgetFactory, Error, TEXT("无效 Widget 父类: %s"), ParentClass ? *ParentClass->GetPathName() : TEXT("<null>"));
+		return nullptr;
+	}
+
 	UWidgetBlueprint* BP = CastChecked<UWidgetBlueprint>(
 		FKismetEditorUtilities::CreateBlueprint(
-			UUserWidget::StaticClass(), Package, FName(*WidgetName),
+			ParentClass, Package, FName(*WidgetName),
 			BPTYPE_Normal, UWidgetBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass()));
 
 	if (!BP) { UE_LOG(LogWidgetFactory, Error, TEXT("创建 Blueprint 失败: %s"), *WidgetName); }
@@ -2485,7 +2491,22 @@ UWidgetBlueprint* UWidgetFactoryGenerator::GenerateFromJson(const FString& JsonF
 		return nullptr;
 	}
 
-	UWidgetBlueprint* BP = CreateWidgetBlueprint(PackagePath, WidgetName);
+	UClass* ParentClass = UUserWidget::StaticClass();
+	FString ParentClassPath;
+	if (Config->TryGetStringField(TEXT("ParentClass"), ParentClassPath) && !ParentClassPath.IsEmpty())
+	{
+		if (UClass* LoadedParentClass = LoadClass<UUserWidget>(nullptr, *ParentClassPath))
+		{
+			ParentClass = LoadedParentClass;
+		}
+		else
+		{
+			UE_LOG(LogWidgetFactory, Error, TEXT("无法加载 ParentClass: %s"), *ParentClassPath);
+			return nullptr;
+		}
+	}
+
+	UWidgetBlueprint* BP = CreateWidgetBlueprint(PackagePath, WidgetName, ParentClass);
 	if (!BP) return nullptr;
 
 	UWidgetTree* Tree = BP->WidgetTree;

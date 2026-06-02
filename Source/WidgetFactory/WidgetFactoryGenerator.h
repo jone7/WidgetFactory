@@ -71,7 +71,7 @@ private:
 	static FString CustomTemplateDir;
 
 	static TSharedPtr<FJsonObject> LoadJsonConfig(const FString& JsonPath);
-	static UWidgetBlueprint* CreateWidgetBlueprint(const FString& PackagePath, const FString& WidgetName);
+	static UWidgetBlueprint* CreateWidgetBlueprint(const FString& PackagePath, const FString& WidgetName, UClass* ParentClass);
 	static bool PrepareExistingAssetForOverwrite(const FString& FullPath, const FString& WidgetName, bool* bOutHadOpenEditor = nullptr);
 	static bool ResetWidgetBlueprintForReuse(UWidgetBlueprint* WidgetBlueprint);
 	static UWidget* CreateWidgetFromJson(UWidgetTree* WidgetTree, const TSharedPtr<FJsonObject>& WidgetJson, UPanelWidget* Parent);

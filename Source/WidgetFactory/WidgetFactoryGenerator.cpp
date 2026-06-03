@@ -27,6 +27,7 @@
 #include "Components/WrapBox.h"
 #include "Components/ProgressBar.h"
 #include "Components/Slider.h"
+#include "Components/SpinBox.h"
 #include "Components/CheckBox.h"
 #include "Components/EditableText.h"
 #include "Components/EditableTextBox.h"
@@ -228,6 +229,7 @@ static void EnsureClassMapInitialized()
 	GWidgetClassMap.Add(TEXT("Spacer"),              USpacer::StaticClass());
 	GWidgetClassMap.Add(TEXT("ProgressBar"),         UProgressBar::StaticClass());
 	GWidgetClassMap.Add(TEXT("Slider"),              USlider::StaticClass());
+	GWidgetClassMap.Add(TEXT("SpinBox"),             USpinBox::StaticClass());
 	GWidgetClassMap.Add(TEXT("CheckBox"),            UCheckBox::StaticClass());
 	GWidgetClassMap.Add(TEXT("EditableText"),        UEditableText::StaticClass());
 	GWidgetClassMap.Add(TEXT("EditableTextBox"),     UEditableTextBox::StaticClass());
@@ -1309,6 +1311,87 @@ void UWidgetFactoryGenerator::SetWidgetProperties(UWidget* Widget, const TShared
 		}
 	}
 
+	// SpinBox
+	if (USpinBox* SpinBox = Cast<USpinBox>(Widget))
+	{
+		double Value = 0.0;
+		if (Props->TryGetNumberField(TEXT("Value"), Value))
+		{
+			SpinBox->SetValue(static_cast<float>(Value));
+		}
+
+		double NumericProp = 0.0;
+		if (Props->TryGetNumberField(TEXT("MinValue"), NumericProp))
+		{
+			SpinBox->SetMinValue(static_cast<float>(NumericProp));
+		}
+		if (Props->TryGetNumberField(TEXT("MaxValue"), NumericProp))
+		{
+			SpinBox->SetMaxValue(static_cast<float>(NumericProp));
+		}
+		if (Props->TryGetNumberField(TEXT("MinSliderValue"), NumericProp))
+		{
+			SpinBox->SetMinSliderValue(static_cast<float>(NumericProp));
+		}
+		if (Props->TryGetNumberField(TEXT("MaxSliderValue"), NumericProp))
+		{
+			SpinBox->SetMaxSliderValue(static_cast<float>(NumericProp));
+		}
+		if (Props->TryGetNumberField(TEXT("Delta"), NumericProp))
+		{
+			SpinBox->SetDelta(static_cast<float>(NumericProp));
+		}
+		if (Props->TryGetNumberField(TEXT("MinimumDesiredWidth"), NumericProp))
+		{
+			SpinBox->SetMinDesiredWidth(static_cast<float>(NumericProp));
+		}
+
+		int32 IntProp = 0;
+		if (Props->TryGetNumberField(TEXT("MinFractionalDigits"), IntProp))
+		{
+			SpinBox->SetMinFractionalDigits(IntProp);
+		}
+		if (Props->TryGetNumberField(TEXT("MaxFractionalDigits"), IntProp))
+		{
+			SpinBox->SetMaxFractionalDigits(IntProp);
+		}
+
+		FString Justify;
+		if (Props->TryGetStringField(TEXT("Justification"), Justify))
+		{
+			if (Justify == TEXT("Center")) SpinBox->SetJustification(ETextJustify::Center);
+			else if (Justify == TEXT("Right")) SpinBox->SetJustification(ETextJustify::Right);
+			else SpinBox->SetJustification(ETextJustify::Left);
+		}
+
+		int32 FontSize = 0;
+		if (Props->TryGetNumberField(TEXT("FontSize"), FontSize))
+		{
+			FSlateFontInfo Font = SpinBox->GetFont();
+			Font.Size = FontSize;
+			SpinBox->SetFont(Font);
+		}
+
+		FString FontFamily;
+		if (Props->TryGetStringField(TEXT("FontFamily"), FontFamily))
+		{
+			FSlateFontInfo Font = SpinBox->GetFont();
+			UObject* FontObj = LoadAssetObject<UObject>(FontFamily);
+			if (FontObj)
+			{
+				Font.FontObject = FontObj;
+				SpinBox->SetFont(Font);
+			}
+		}
+
+		const TSharedPtr<FJsonObject>* ColorObj = nullptr;
+		if (Props->TryGetObjectField(TEXT("Color"), ColorObj)
+			|| Props->TryGetObjectField(TEXT("ForegroundColor"), ColorObj))
+		{
+			SpinBox->SetForegroundColor(FSlateColor(ParseColor(*ColorObj)));
+		}
+	}
+
 	// Spacer
 	if (USpacer* Sp = Cast<USpacer>(Widget))
 	{
@@ -1941,6 +2024,34 @@ TSharedPtr<FJsonObject> UWidgetFactoryGenerator::ExportPropertiesToJson(UWidget*
 			Props->SetNumberField(TEXT("FontSize"), EditableTextBox->GetWidgetStyle().TextStyle.Font.Size);
 			bHasProps = true;
 		}
+	}
+
+	// SpinBox
+	if (USpinBox* SpinBox = Cast<USpinBox>(Widget))
+	{
+		Props->SetNumberField(TEXT("Value"), SpinBox->GetValue());
+		Props->SetNumberField(TEXT("MinValue"), SpinBox->GetMinValue());
+		Props->SetNumberField(TEXT("MaxValue"), SpinBox->GetMaxValue());
+		Props->SetNumberField(TEXT("MinSliderValue"), SpinBox->GetMinSliderValue());
+		Props->SetNumberField(TEXT("MaxSliderValue"), SpinBox->GetMaxSliderValue());
+		Props->SetNumberField(TEXT("Delta"), SpinBox->GetDelta());
+		Props->SetNumberField(TEXT("MinimumDesiredWidth"), SpinBox->GetMinDesiredWidth());
+		Props->SetNumberField(TEXT("MinFractionalDigits"), SpinBox->GetMinFractionalDigits());
+		Props->SetNumberField(TEXT("MaxFractionalDigits"), SpinBox->GetMaxFractionalDigits());
+		if (SpinBox->GetJustification() != ETextJustify::Left)
+		{
+			Props->SetStringField(TEXT("Justification"), TextJustificationToString(SpinBox->GetJustification()));
+		}
+		if (SpinBox->GetFont().Size != 24)
+		{
+			Props->SetNumberField(TEXT("FontSize"), SpinBox->GetFont().Size);
+		}
+		const FLinearColor TextColor = SpinBox->GetForegroundColor().GetSpecifiedColor();
+		if (TextColor != FLinearColor::White)
+		{
+			Props->SetObjectField(TEXT("ForegroundColor"), ColorToJson(TextColor));
+		}
+		bHasProps = true;
 	}
 
 	// ProgressBar

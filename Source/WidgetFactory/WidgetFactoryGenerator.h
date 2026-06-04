@@ -49,7 +49,7 @@ public:
 	/**
 	 * 从已有 Widget Blueprint 导出 JSON 模板（反向工程）
 	 * @param WidgetPath  资源路径，如 /Game/UI/WBP_GameHUD
-	 * @param OutputFileName  输出文件名（不含路径和扩展名），为空则使用资源名
+	 * @param OutputFileName  输出文件名（不含路径和扩展名），或显式 json 输出路径；为空则使用资源名
 	 * @return 是否导出成功
 	 */
 	UFUNCTION(BlueprintCallable, Category = "WidgetFactory")

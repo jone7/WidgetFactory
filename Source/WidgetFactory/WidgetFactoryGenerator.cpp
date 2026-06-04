@@ -137,6 +137,140 @@ FString ResolveWidgetTemplatePath(const FString& JsonFileNameOrPath)
 	return TemplateDir / FileName;
 }
 
+bool ShouldTreatExportTargetAsPath(const FString& OutputFileName)
+{
+	if (OutputFileName.IsEmpty())
+	{
+		return false;
+	}
+
+	return OutputFileName.Contains(TEXT("/"))
+		|| OutputFileName.Contains(TEXT("\\"))
+		|| OutputFileName.Contains(TEXT(":"));
+}
+
+FString ResolveExportJsonPath(const FString& OutputFileNameOrPath, const FString& DefaultFileName)
+{
+	if (!ShouldTreatExportTargetAsPath(OutputFileNameOrPath))
+	{
+		FString FileName = OutputFileNameOrPath.IsEmpty() ? DefaultFileName : OutputFileNameOrPath;
+		if (FileName.EndsWith(TEXT(".json")))
+		{
+			FileName.LeftChopInline(5, EAllowShrinking::No);
+		}
+		return UWidgetFactoryGenerator::GetTemplateDirectory() / (FileName + TEXT(".json"));
+	}
+
+	FString OutputPath = OutputFileNameOrPath;
+	OutputPath.ReplaceInline(TEXT("\\"), TEXT("/"));
+	if (!OutputPath.EndsWith(TEXT(".json")))
+	{
+		OutputPath += TEXT(".json");
+	}
+	if (FPaths::IsRelative(OutputPath))
+	{
+		OutputPath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / OutputPath);
+	}
+	return OutputPath;
+}
+
+TSharedPtr<FJsonObject> TryLoadExistingJsonObject(const FString& JsonPath)
+{
+	if (!FPaths::FileExists(JsonPath))
+	{
+		return nullptr;
+	}
+
+	FString JsonText;
+	if (!FFileHelper::LoadFileToString(JsonText, *JsonPath))
+	{
+		return nullptr;
+	}
+
+	TSharedPtr<FJsonObject> JsonObject;
+	const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonText);
+	if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+	{
+		return nullptr;
+	}
+
+	return JsonObject;
+}
+
+bool IsIngredientPlaceholderValue(const TSharedPtr<FJsonValue>& JsonValue)
+{
+	if (!JsonValue.IsValid() || JsonValue->Type != EJson::String)
+	{
+		return false;
+	}
+
+	FString StringValue;
+	return JsonValue->TryGetString(StringValue) && StringValue.StartsWith(TEXT("@ingredient:"));
+}
+
+TSharedPtr<FJsonValue> PreserveIngredientPlaceholders(
+	const TSharedPtr<FJsonValue>& ExportedValue,
+	const TSharedPtr<FJsonValue>& ExistingValue);
+
+TSharedPtr<FJsonObject> PreserveIngredientPlaceholders(
+	const TSharedPtr<FJsonObject>& ExportedObject,
+	const TSharedPtr<FJsonObject>& ExistingObject)
+{
+	if (!ExportedObject.IsValid() || !ExistingObject.IsValid())
+	{
+		return ExportedObject;
+	}
+
+	for (TPair<FString, TSharedPtr<FJsonValue>>& Pair : ExportedObject->Values)
+	{
+		const TSharedPtr<FJsonValue>* ExistingValue = ExistingObject->Values.Find(Pair.Key);
+		if (!ExistingValue || !ExistingValue->IsValid())
+		{
+			continue;
+		}
+
+		Pair.Value = PreserveIngredientPlaceholders(Pair.Value, *ExistingValue);
+	}
+
+	return ExportedObject;
+}
+
+TSharedPtr<FJsonValue> PreserveIngredientPlaceholders(
+	const TSharedPtr<FJsonValue>& ExportedValue,
+	const TSharedPtr<FJsonValue>& ExistingValue)
+{
+	if (!ExportedValue.IsValid() || !ExistingValue.IsValid())
+	{
+		return ExportedValue;
+	}
+
+	if (IsIngredientPlaceholderValue(ExistingValue))
+	{
+		return ExistingValue;
+	}
+
+	if (ExportedValue->Type == EJson::Object && ExistingValue->Type == EJson::Object)
+	{
+		TSharedPtr<FJsonObject> ExportedObject = ExportedValue->AsObject();
+		const TSharedPtr<FJsonObject> ExistingObject = ExistingValue->AsObject();
+		return MakeShared<FJsonValueObject>(PreserveIngredientPlaceholders(ExportedObject, ExistingObject));
+	}
+
+	if (ExportedValue->Type == EJson::Array && ExistingValue->Type == EJson::Array)
+	{
+		TArray<TSharedPtr<FJsonValue>> ExportedArray = ExportedValue->AsArray();
+		const TArray<TSharedPtr<FJsonValue>>& ExistingArray = ExistingValue->AsArray();
+		const int32 SharedCount = FMath::Min(ExportedArray.Num(), ExistingArray.Num());
+		for (int32 Index = 0; Index < SharedCount; ++Index)
+		{
+			ExportedArray[Index] = PreserveIngredientPlaceholders(ExportedArray[Index], ExistingArray[Index]);
+		}
+		return MakeShared<FJsonValueArray>(ExportedArray);
+	}
+
+	return ExportedValue;
+}
+
 FString NormalizeObjectLoadPath(const FString& AssetPath)
 {
 	FString LoadPath = AssetPath;
@@ -2558,6 +2692,20 @@ bool UWidgetFactoryGenerator::ExportToJson(const FString& WidgetPath, const FStr
 		Config->SetObjectField(TEXT("UnLuaBinding"), UnLuaJson);
 	}
 
+	const FString OutputPath = ResolveExportJsonPath(
+		OutputFileName,
+		WidgetBP->GetName());
+	if (OutputPath.IsEmpty())
+	{
+		UE_LOG(LogWidgetFactory, Error, TEXT("导出目标路径为空: %s"), *WidgetPath);
+		return false;
+	}
+
+	if (const TSharedPtr<FJsonObject> ExistingConfig = TryLoadExistingJsonObject(OutputPath))
+	{
+		PreserveIngredientPlaceholders(Config, ExistingConfig);
+	}
+
 	// Serialize to string
 	FString OutputStr;
 	TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> Writer = TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&OutputStr);
@@ -2570,8 +2718,7 @@ bool UWidgetFactoryGenerator::ExportToJson(const FString& WidgetPath, const FStr
 	Writer->Close();
 
 	// Write file
-	FString FileName = OutputFileName.IsEmpty() ? WidgetBP->GetName() : OutputFileName;
-	FString OutputPath = GetTemplateDirectory() / (FileName + TEXT(".json"));
+	IFileManager::Get().MakeDirectory(*FPaths::GetPath(OutputPath), true);
 	if (FFileHelper::SaveStringToFile(OutputStr, *OutputPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
 	{
 		UE_LOG(LogWidgetFactory, Log, TEXT("导出成功: %s"), *OutputPath);

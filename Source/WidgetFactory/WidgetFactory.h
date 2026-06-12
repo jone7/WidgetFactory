@@ -14,4 +14,6 @@ private:
 	void RegisterConsoleCommands();
 	void UnregisterConsoleCommands();
 	void RegisterMenu();
+
+	FDelegateHandle PackageSavedHandle;
 };

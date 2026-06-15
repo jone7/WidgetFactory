@@ -1439,9 +1439,28 @@ void UWidgetFactoryGenerator::SetWidgetProperties(UWidget* Widget, const TShared
 			bStyleChanged = true;
 		}
 
-		if (bStyleChanged)
+	if (bStyleChanged)
+	{
+		EditableTextBox->SetWidgetStyle(Style);
+	}
+	}
+
+	// ComboBoxString
+	if (UComboBoxString* ComboBox = Cast<UComboBoxString>(Widget))
+	{
+		const TSharedPtr<FJsonObject>* ColorObj = nullptr;
+		if (Props->TryGetObjectField(TEXT("Color"), ColorObj)
+			|| Props->TryGetObjectField(TEXT("ForegroundColor"), ColorObj))
 		{
-			EditableTextBox->SetWidgetStyle(Style);
+			const FSlateColor Foreground = FSlateColor(ParseColor(*ColorObj));
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
+			ComboBox->ForegroundColor = Foreground;
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+			FTableRowStyle ItemStyle = ComboBox->GetItemStyle();
+			ItemStyle.SetTextColor(Foreground);
+			ItemStyle.SetSelectedTextColor(Foreground);
+			ComboBox->SetItemStyle(ItemStyle);
 		}
 	}
 
@@ -2184,6 +2203,17 @@ TSharedPtr<FJsonObject> UWidgetFactoryGenerator::ExportPropertiesToJson(UWidget*
 		if (TextColor != FLinearColor::White)
 		{
 			Props->SetObjectField(TEXT("ForegroundColor"), ColorToJson(TextColor));
+		}
+		bHasProps = true;
+	}
+
+	// ComboBoxString
+	if (UComboBoxString* ComboBox = Cast<UComboBoxString>(Widget))
+	{
+		const FLinearColor Foreground = ComboBox->GetForegroundColor().GetSpecifiedColor();
+		if (Foreground != FLinearColor::White)
+		{
+			Props->SetObjectField(TEXT("ForegroundColor"), ColorToJson(Foreground));
 		}
 		bHasProps = true;
 	}

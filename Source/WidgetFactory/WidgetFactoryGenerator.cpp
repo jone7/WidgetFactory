@@ -221,7 +221,7 @@ TSharedPtr<FJsonObject> PreserveIngredientPlaceholders(
 		return ExportedObject;
 	}
 
-	for (TPair<FString, TSharedPtr<FJsonValue>>& Pair : ExportedObject->Values)
+	for (auto& Pair : ExportedObject->Values)
 	{
 		const TSharedPtr<FJsonValue>* ExistingValue = ExistingObject->Values.Find(Pair.Key);
 		if (!ExistingValue || !ExistingValue->IsValid())
@@ -2742,7 +2742,8 @@ bool UWidgetFactoryGenerator::ExportToJson(const FString& WidgetPath, const FStr
 	Writer->WriteObjectStart();
 	for (const auto& Pair : Config->Values)
 	{
-		FJsonSerializer::Serialize(Pair.Value, Pair.Key, *Writer, true);
+		const FString FieldName(Pair.Key);
+		FJsonSerializer::Serialize(Pair.Value, FieldName, *Writer, false);
 	}
 	Writer->WriteObjectEnd();
 	Writer->Close();

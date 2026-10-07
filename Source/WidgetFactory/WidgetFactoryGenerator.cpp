@@ -45,6 +45,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Styling/SlateBrush.h"
 #include "Styling/SlateTypes.h"
+#include "Brushes/SlateColorBrush.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "UObject/SavePackage.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -1247,6 +1248,7 @@ static TSharedPtr<FJsonObject> EditableTextBoxStyleToJson(const FEditableTextBox
 	return bHasData ? Json : nullptr;
 }
 
+/** 按 JSON 设置控件属性，下拉框的收起、展开及选中样式统一消费作者颜色。 */
 void UWidgetFactoryGenerator::SetWidgetProperties(UWidget* Widget, const TSharedPtr<FJsonObject>& Props)
 {
 	if (!Widget || !Props.IsValid()) return;
@@ -1448,6 +1450,9 @@ void UWidgetFactoryGenerator::SetWidgetProperties(UWidget* Widget, const TShared
 	// ComboBoxString
 	if (UComboBoxString* ComboBox = Cast<UComboBoxString>(Widget))
 	{
+		FComboBoxStyle WidgetStyle = ComboBox->GetWidgetStyle();
+		FTableRowStyle ItemStyle = ComboBox->GetItemStyle();
+		bool bStyleChanged = false;
 		const TSharedPtr<FJsonObject>* ColorObj = nullptr;
 		if (Props->TryGetObjectField(TEXT("Color"), ColorObj)
 			|| Props->TryGetObjectField(TEXT("ForegroundColor"), ColorObj))
@@ -1457,9 +1462,37 @@ void UWidgetFactoryGenerator::SetWidgetProperties(UWidget* Widget, const TShared
 			ComboBox->ForegroundColor = Foreground;
 			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
-			FTableRowStyle ItemStyle = ComboBox->GetItemStyle();
 			ItemStyle.SetTextColor(Foreground);
 			ItemStyle.SetSelectedTextColor(Foreground);
+			bStyleChanged = true;
+		}
+		if (Props->TryGetObjectField(TEXT("BackgroundColor"), ColorObj))
+		{
+			const FSlateColorBrush Brush(ParseColor(*ColorObj));
+			WidgetStyle.ComboButtonStyle.ButtonStyle.SetNormal(Brush).SetHovered(Brush).SetPressed(Brush).SetDisabled(Brush);
+			WidgetStyle.ComboButtonStyle.SetMenuBorderBrush(Brush);
+			ItemStyle.SetEvenRowBackgroundBrush(Brush).SetOddRowBackgroundBrush(Brush);
+			ItemStyle.SetEvenRowBackgroundHoveredBrush(Brush).SetOddRowBackgroundHoveredBrush(Brush);
+			bStyleChanged = true;
+		}
+		if (Props->TryGetObjectField(TEXT("HoverBackgroundColor"), ColorObj))
+		{
+			const FSlateColorBrush Brush(ParseColor(*ColorObj));
+			WidgetStyle.ComboButtonStyle.ButtonStyle.SetHovered(Brush);
+			ItemStyle.SetEvenRowBackgroundHoveredBrush(Brush).SetOddRowBackgroundHoveredBrush(Brush);
+			bStyleChanged = true;
+		}
+		if (Props->TryGetObjectField(TEXT("SelectionBackgroundColor"), ColorObj))
+		{
+			const FSlateColorBrush Brush(ParseColor(*ColorObj));
+			WidgetStyle.ComboButtonStyle.ButtonStyle.SetPressed(Brush);
+			ItemStyle.SetActiveBrush(Brush).SetInactiveBrush(Brush);
+			ItemStyle.SetActiveHoveredBrush(Brush).SetInactiveHoveredBrush(Brush);
+			bStyleChanged = true;
+		}
+		if (bStyleChanged)
+		{
+			ComboBox->SetWidgetStyle(WidgetStyle);
 			ComboBox->SetItemStyle(ItemStyle);
 		}
 	}
@@ -2048,6 +2081,7 @@ FString UWidgetFactoryGenerator::GetWidgetTypeName(UWidget* Widget)
 	return Widget->GetClass()->GetName();
 }
 
+/** 回导实际控件属性，保留下拉框配色，避免下一次 JSON 生成丢失可读样式。 */
 TSharedPtr<FJsonObject> UWidgetFactoryGenerator::ExportPropertiesToJson(UWidget* Widget)
 {
 	if (!Widget) return nullptr;
@@ -2215,6 +2249,15 @@ TSharedPtr<FJsonObject> UWidgetFactoryGenerator::ExportPropertiesToJson(UWidget*
 		{
 			Props->SetObjectField(TEXT("ForegroundColor"), ColorToJson(Foreground));
 		}
+		const auto* Defaults = GetDefault<UComboBoxString>();
+		const auto& Style = ComboBox->GetWidgetStyle();
+		const auto& DefaultStyle = Defaults->GetWidgetStyle();
+		if (Style.ComboButtonStyle.ButtonStyle.Normal != DefaultStyle.ComboButtonStyle.ButtonStyle.Normal)
+			Props->SetObjectField(TEXT("BackgroundColor"), ColorToJson(Style.ComboButtonStyle.ButtonStyle.Normal.TintColor.GetSpecifiedColor()));
+		if (Style.ComboButtonStyle.ButtonStyle.Hovered != DefaultStyle.ComboButtonStyle.ButtonStyle.Hovered)
+			Props->SetObjectField(TEXT("HoverBackgroundColor"), ColorToJson(Style.ComboButtonStyle.ButtonStyle.Hovered.TintColor.GetSpecifiedColor()));
+		if (ComboBox->GetItemStyle().ActiveBrush != Defaults->GetItemStyle().ActiveBrush)
+			Props->SetObjectField(TEXT("SelectionBackgroundColor"), ColorToJson(ComboBox->GetItemStyle().ActiveBrush.TintColor.GetSpecifiedColor()));
 		bHasProps = true;
 	}
 

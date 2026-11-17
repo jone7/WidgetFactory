@@ -192,6 +192,7 @@ bool TryResolveWidgetJsonPathFromManifest(const FString& PackagePath, FString& O
 }
 }
 
+/** 注册 UI 作者工具与保存回写；Cook 的平台保存不修改源模板。 */
 void FWidgetFactoryModule::StartupModule()
 {
 	RegisterConsoleCommands();
@@ -200,8 +201,14 @@ void FWidgetFactoryModule::StartupModule()
 		FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FWidgetFactoryModule::RegisterMenu));
 
 	PackageSavedHandle = UPackage::PackageSavedWithContextEvent.AddLambda(
-		[](const FString&, UPackage* SavedPackage, FObjectPostSaveContext)
+		[](const FString&, UPackage* SavedPackage, FObjectPostSaveContext SaveContext)
 		{
+			// Cook 保存的是派生资源，不能用其裁剪后的控件数据覆盖作者模板。
+			if (SaveContext.IsCooking())
+			{
+				return;
+			}
+
 			if (!SavedPackage)
 			{
 				return;
